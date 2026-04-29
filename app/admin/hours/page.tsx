@@ -8,7 +8,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { Upload, AlertTriangle, CheckCircle2, FileText, Pencil, Trash2, Check, X } from 'lucide-react'
+import { Upload, AlertTriangle, CheckCircle2, FileText, Pencil, Trash2, Check, X, Plus, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import type {
   ParsedTimeEntry, ImportTimeEntriesResult,
   TimeEntryByResource, TimeEntryByProject, TimeEntryByMonth,
@@ -547,18 +547,28 @@ function TabTabla() {
   const [month,      setMonth]      = useState('')
   const [page,       setPage]       = useState(1)
 
+  // sort state
+  const [sortBy,  setSortBy]  = useState<'date' | 'resource' | 'project'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
   // edit state
   const [editingId,  setEditingId]  = useState<number | null>(null)
   const [editForm,   setEditForm]   = useState<EditForm>({ resourceId: '', projectId: '', date: '', hours: '' })
   const [saving,     setSaving]     = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
 
+  // add state
+  const [isAdding,     setIsAdding]     = useState(false)
+  const [newForm,      setNewForm]      = useState({ resourceId: '', projectId: '', date: '', hours: '' })
+  const [addingSaving, setAddingSaving] = useState(false)
+
   const { data: resources } = useQuery({ queryKey: ['resources'], queryFn: () => fetch('/api/resources').then((r) => r.json()) })
   const { data: projects }  = useQuery({ queryKey: ['projects'],  queryFn: () => fetch('/api/projects').then((r) => r.json()) })
 
-  const rawKey = ['time-entries', 'raw', resourceId, projectId, dateFrom, dateTo, month, page]
+  const rawKey = ['time-entries', 'raw', resourceId, projectId, dateFrom, dateTo, month, page, sortBy, sortDir]
   const params = new URLSearchParams({
     view: 'raw', page: String(page), pageSize: '100',
+    sortBy, sortDir,
     ...(resourceId && { resourceId }),
     ...(projectId  && { projectId }),
     ...(month ? { month } : {}),
@@ -627,6 +637,52 @@ function TabTabla() {
     }
   }
 
+  const handleSort = (col: 'date' | 'resource' | 'project') => {
+    if (sortBy === col) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(col)
+      setSortDir('asc')
+    }
+    setPage(1)
+  }
+
+  const saveNew = async () => {
+    if (!newForm.resourceId || !newForm.projectId || !newForm.date || !newForm.hours) {
+      alert('Completar todos los campos')
+      return
+    }
+    setAddingSaving(true)
+    try {
+      const res = await fetch('/api/time-entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resourceId: Number(newForm.resourceId),
+          projectId:  Number(newForm.projectId),
+          date:       new Date(newForm.date + 'T12:00:00Z').toISOString(),
+          hours:      Number(newForm.hours),
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error ?? 'Error al guardar')
+      }
+      qc.invalidateQueries({ queryKey: ['time-entries'] })
+      setIsAdding(false)
+      setNewForm({ resourceId: '', projectId: '', date: '', hours: '' })
+    } catch (err) {
+      alert(`Error: ${(err as Error).message}`)
+    } finally {
+      setAddingSaving(false)
+    }
+  }
+
+  function SortIcon({ col }: { col: 'date' | 'resource' | 'project' }) {
+    if (sortBy !== col) return <ArrowUpDown size={12} className="opacity-40" />
+    return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+  }
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -666,20 +722,83 @@ function TabTabla() {
           <span className="text-sm text-gray-600">
             {isFetching ? 'Cargando...' : `${total.toLocaleString()} registros`}
           </span>
-          <span className="text-sm font-semibold text-[#0170B9]">Total: {formatHours(totalHours)} hs</span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-[#0170B9]">Total: {formatHours(totalHours)} hs</span>
+            <button
+              onClick={() => { setIsAdding(true); setEditingId(null) }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#0170B9] text-white rounded hover:bg-[#0160a0] transition-colors"
+            >
+              <Plus size={14} /> Nueva entrada
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto max-h-[500px]">
           <table className="w-full text-sm">
             <thead className="bg-[#0170B9] text-white sticky top-0">
               <tr>
-                <th className="px-4 py-2 text-left">Persona</th>
-                <th className="px-4 py-2 text-left">Proyecto</th>
-                <th className="px-4 py-2 text-left">Fecha</th>
+                <th className="px-4 py-2 text-left cursor-pointer hover:bg-[#0161a5] select-none"
+                    onClick={() => handleSort('resource')}>
+                  <span className="inline-flex items-center gap-1">Persona <SortIcon col="resource" /></span>
+                </th>
+                <th className="px-4 py-2 text-left cursor-pointer hover:bg-[#0161a5] select-none"
+                    onClick={() => handleSort('project')}>
+                  <span className="inline-flex items-center gap-1">Proyecto <SortIcon col="project" /></span>
+                </th>
+                <th className="px-4 py-2 text-left cursor-pointer hover:bg-[#0161a5] select-none"
+                    onClick={() => handleSort('date')}>
+                  <span className="inline-flex items-center gap-1">Fecha <SortIcon col="date" /></span>
+                </th>
                 <th className="px-4 py-2 text-right">Horas</th>
                 <th className="px-3 py-2 w-20"></th>
               </tr>
             </thead>
             <tbody>
+              {isAdding && (
+                <tr className="border-t bg-green-50">
+                  <td className="px-2 py-1.5">
+                    <select value={newForm.resourceId}
+                      onChange={(ev) => setNewForm((f) => ({ ...f, resourceId: ev.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-full">
+                      <option value="">Persona...</option>
+                      {(resources ?? []).map((r: { id: number; name: string }) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <select value={newForm.projectId}
+                      onChange={(ev) => setNewForm((f) => ({ ...f, projectId: ev.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-full">
+                      <option value="">Proyecto...</option>
+                      {(projects ?? []).map((p: { id: number; name: string }) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="date" value={newForm.date}
+                      onChange={(ev) => setNewForm((f) => ({ ...f, date: ev.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-full" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" step="0.5" min="0.5" value={newForm.hours}
+                      onChange={(ev) => setNewForm((f) => ({ ...f, hours: ev.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-20 text-right" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-1">
+                      <button onClick={saveNew} disabled={addingSaving}
+                        className="p-1.5 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50" title="Guardar">
+                        <Check size={13} />
+                      </button>
+                      <button onClick={() => { setIsAdding(false); setNewForm({ resourceId: '', projectId: '', date: '', hours: '' }) }}
+                        className="p-1.5 rounded bg-gray-200 text-gray-600 hover:bg-gray-300" title="Cancelar">
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
               {entries.map((e) => (
                 editingId === e.id ? (
                   /* ── Edit row ── */
