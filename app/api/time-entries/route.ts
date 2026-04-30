@@ -178,14 +178,25 @@ export async function GET(req: NextRequest) {
   }
 
   // Default: raw with pagination
+  const sortBy  = searchParams.get('sortBy')  ?? 'date'
+  const sortDir = (searchParams.get('sortDir') ?? 'desc') as 'asc' | 'desc'
+
+  const orderByMap: Record<string, object[]> = {
+    resource: [{ resource: { name: sortDir } }, { date: 'desc'  }],
+    project:  [{ project:  { name: sortDir } }, { date: 'desc'  }],
+    date:     [{ date: sortDir },               { resourceId: 'asc' }],
+  }
+  const orderBy = orderByMap[sortBy] ?? orderByMap.date
+
   const total = await prisma.timeEntry.count({ where })
   const entries = await prisma.timeEntry.findMany({
     where,
-    include: {
+    select: {
+      id: true, resourceId: true, projectId: true, date: true, hours: true, entryType: true,
       resource: { select: { id: true, name: true, color: true } },
-      project: { select: { id: true, name: true, color: true } },
+      project:  { select: { id: true, name: true, color: true } },
     },
-    orderBy: [{ date: 'desc' }, { resourceId: 'asc' }],
+    orderBy,
     skip: (page - 1) * pageSize,
     take: pageSize,
   })

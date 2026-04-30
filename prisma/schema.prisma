@@ -132,11 +132,12 @@ model TimeEntry {
   projectId  Int
   date       DateTime
   hours      Float
+  entryType  String   @default("regular")
 
   resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
   project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@unique([resourceId, projectId, date])
+  @@unique([resourceId, projectId, date, entryType])
 }
 
 model ProjectResourceRate {

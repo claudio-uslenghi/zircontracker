@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   const unmatchedResources = new Set<string>()
   const unmatchedProjects = new Set<string>()
 
-  type ResolvedEntry = { resourceId: number; projectId: number; date: string; hours: number }
+  type ResolvedEntry = { resourceId: number; projectId: number; date: string; hours: number; entryType: string }
   const resolved: ResolvedEntry[] = []
 
   for (const e of entries) {
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    resolved.push({ resourceId, projectId, date: e.date, hours: e.hours })
+    resolved.push({ resourceId, projectId, date: e.date, hours: e.hours, entryType: e.entryType ?? 'regular' })
   }
 
   if (!resolved.length) {
@@ -97,10 +97,10 @@ export async function POST(req: NextRequest) {
     const chunk = resolved.slice(i, i + CHUNK)
     await turso.batch(
       chunk.map((e) => ({
-        sql: `INSERT INTO "TimeEntry" (resourceId, projectId, date, hours)
-              VALUES (?, ?, ?, ?)
-              ON CONFLICT (resourceId, projectId, date) DO UPDATE SET hours = excluded.hours`,
-        args: [e.resourceId, e.projectId, e.date, e.hours],
+        sql: `INSERT INTO "TimeEntry" (resourceId, projectId, date, hours, entryType)
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT (resourceId, projectId, date, entryType) DO UPDATE SET hours = excluded.hours`,
+        args: [e.resourceId, e.projectId, e.date, e.hours, e.entryType],
       })),
       'write'
     )

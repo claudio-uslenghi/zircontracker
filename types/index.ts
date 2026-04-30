@@ -82,6 +82,7 @@ export interface TimeEntry {
   projectId: number
   date: string
   hours: number
+  entryType: string
   resource?: Pick<Resource, 'id' | 'name' | 'color'>
   project?: Pick<Project, 'id' | 'name' | 'color'>
 }
@@ -120,6 +121,7 @@ export interface ParsedTimeEntry {
   projectName: string
   date: string
   hours: number
+  entryType?: string       // "regular" | "extra" — optional, defaults to "regular"
 }
 
 export type ProjectStatus = 'En ejecución' | 'Próximo' | 'En planificación' | 'Continuo' | 'Finalizado' | 'No Facturable'

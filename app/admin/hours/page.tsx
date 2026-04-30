@@ -8,13 +8,16 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { Upload, AlertTriangle, CheckCircle2, FileText, Pencil, Trash2, Check, X } from 'lucide-react'
+import {
+  Upload, AlertTriangle, CheckCircle2, FileText, Pencil, Trash2, Check, X,
+  ChevronDown, Plus, ArrowUp, ArrowDown, ArrowUpDown,
+} from 'lucide-react'
 import type {
   ParsedTimeEntry, ImportTimeEntriesResult,
   TimeEntryByResource, TimeEntryByProject, TimeEntryByMonth,
 } from '@/types'
 
-// ─── CSV Parsing ────────────────────────────────────────────────────────────
+// ─── CSV Parsing (Legacy) ────────────────────────────────────────────────────
 
 function parseCsvDate(raw: string): string | null {
   const d = dateParse(raw.trim(), 'dd/MMM/yy', new Date(), { locale: enUS })
@@ -43,12 +46,10 @@ function parseCsv(buffer: ArrayBuffer): ParsedTimeEntry[] {
   const entries: ParsedTimeEntry[] = []
 
   for (let r = 1; r < lines.length; r++) {
-    // Split respecting quoted fields
     const cols = lines[r].split(',')
     const resourceName = cols[1]?.trim() ?? ''
     const projectName = cols[2]?.trim() ?? ''
 
-    // Skip total rows (no project) or empty rows
     if (!resourceName || !projectName) continue
 
     for (const { index, iso } of dateCols) {
@@ -86,7 +87,6 @@ function parseClockifyCsv(buffer: ArrayBuffer): ParsedTimeEntry[] {
   const lines = text.split(/\r?\n/).filter((l) => l.trim())
   if (lines.length < 2) return []
 
-  // Aggregate by email+project+date (multiple time entries per day → sum)
   const agg = new Map<string, ParsedTimeEntry>()
 
   for (let r = 1; r < lines.length; r++) {
@@ -94,14 +94,13 @@ function parseClockifyCsv(buffer: ArrayBuffer): ParsedTimeEntry[] {
     const projectName = cols[0]?.trim() ?? ''
     const userName    = cols[5]?.trim() ?? ''
     const email       = cols[7]?.trim() ?? ''
-    const dateRaw     = cols[10]?.trim() ?? '' // DD/MM/YYYY
-    const hoursRaw    = cols[15]?.trim() ?? '' // decimal
+    const dateRaw     = cols[10]?.trim() ?? ''
+    const hoursRaw    = cols[15]?.trim() ?? ''
 
     if (!projectName || !dateRaw || (!userName && !email)) continue
     const hours = parseFloat(hoursRaw)
     if (isNaN(hours) || hours <= 0) continue
 
-    // Parse DD/MM/YYYY
     const parts = dateRaw.split('/')
     if (parts.length !== 3) continue
     const [d, m, y] = parts.map(Number)
@@ -118,6 +117,56 @@ function parseClockifyCsv(buffer: ArrayBuffer): ParsedTimeEntry[] {
   }
 
   return Array.from(agg.values())
+}
+
+// ─── SCC Excel Parsing ───────────────────────────────────────────────────────
+
+async function parseSccExcel(
+  buffer: ArrayBuffer,
+  year: number,
+  projectName: string
+): Promise<{ entries: ParsedTimeEntry[]; resourceName: string }> {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' })
+  const ws = wb.Sheets[wb.SheetNames[0]]
+  const resourceName = ((ws['A7']?.v as string) ?? '').trim()
+  const cols = ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M']
+  const dayEntries = new Map<string, ParsedTimeEntry>()
+
+  function addHours(day: number, monthIdx: number, hours: number, entryType: string) {
+    const monthNum = monthIdx + 1
+    const test = new Date(year, monthNum - 1, day)
+    if (test.getMonth() !== monthNum - 1) return // invalid date (e.g. Feb 31)
+    const date = new Date(Date.UTC(year, monthNum - 1, day, 12, 0, 0)).toISOString()
+    const key = `${resourceName}|${projectName}|${date}|${entryType}`
+    const existing = dayEntries.get(key)
+    if (existing) existing.hours = Math.round((existing.hours + hours) * 100) / 100
+    else dayEntries.set(key, { resourceName, projectName, date, hours, entryType })
+  }
+
+  // Working Days: rows 10–40, value × 8 hours
+  for (let row = 10; row <= 40; row++) {
+    const day = row - 9
+    for (let m = 0; m < 12; m++) {
+      const cell = ws[`${cols[m]}${row}`]
+      if (!cell?.v || typeof cell.v === 'string') continue
+      const hours = Number(cell.v) * 8
+      if (hours > 0) addHours(day, m, hours, 'regular')
+    }
+  }
+
+  // Extra Hours: rows 45–75, value = actual hours (not ×8)
+  for (let row = 45; row <= 75; row++) {
+    const day = row - 44
+    for (let m = 0; m < 12; m++) {
+      const cell = ws[`${cols[m]}${row}`]
+      if (!cell?.v || typeof cell.v === 'string') continue
+      const hours = Number(cell.v)
+      if (hours > 0) addHours(day, m, hours, 'extra')
+    }
+  }
+
+  return { entries: Array.from(dayEntries.values()), resourceName }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -137,10 +186,323 @@ function formatMonth(ym: string) {
   return `${months[parseInt(m) - 1]} ${y.slice(2)}`
 }
 
-// ─── Tab: Importar ───────────────────────────────────────────────────────────
+// ─── Shared ImportResultBlock ─────────────────────────────────────────────────
 
-function TabImport() {
-  const [showClockify, setShowClockify] = useState(false)
+function ImportResultBlock({ result, label }: { result: ImportTimeEntriesResult; label: string }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-2">
+      <div className="flex items-center gap-2 text-green-700 font-semibold text-sm">
+        <CheckCircle2 size={16} /> {label} completada
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: 'Insertados', value: result.inserted, color: 'text-green-600' },
+          { label: 'Actualizados', value: result.updated, color: 'text-blue-600' },
+          { label: 'Saltados', value: result.skipped, color: 'text-gray-500' },
+        ].map((s) => (
+          <div key={s.label} className="border rounded p-2 text-center">
+            <div className={`text-lg font-bold ${s.color}`}>{s.value.toLocaleString()}</div>
+            <div className="text-xs text-gray-500">{s.label}</div>
+          </div>
+        ))}
+      </div>
+      {result.unmatchedResources.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">
+          <div className="flex items-center gap-1 text-yellow-700 font-medium mb-1">
+            <AlertTriangle size={14} /> Personas sin match
+          </div>
+          <div className="text-yellow-800 text-xs">{result.unmatchedResources.join(', ')}</div>
+        </div>
+      )}
+      {result.unmatchedProjects.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">
+          <div className="flex items-center gap-1 text-yellow-700 font-medium mb-1">
+            <AlertTriangle size={14} /> Proyectos sin match
+          </div>
+          <div className="text-yellow-800 text-xs">{result.unmatchedProjects.join(', ')}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Clockify Import Block ───────────────────────────────────────────────────
+
+function ClockifyImport() {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [parsed, setParsed] = useState<ParsedTimeEntry[] | null>(null)
+  const [fileName, setFileName] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [result, setResult] = useState<ImportTimeEntriesResult | null>(null)
+  const [error, setError] = useState('')
+
+  const handleFile = useCallback((file: File) => {
+    setFileName(file.name); setResult(null); setError('')
+    const reader = new FileReader()
+    reader.onload = (e) => setParsed(parseClockifyCsv(e.target?.result as ArrayBuffer))
+    reader.readAsArrayBuffer(file)
+  }, [])
+
+  const handleImport = async () => {
+    if (!parsed) return
+    setImporting(true); setError('')
+    try {
+      const res = await fetch('/api/time-entries/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries: parsed }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al importar')
+      setResult(data); setParsed(null); setFileName('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const uniqueResources = parsed ? new Set(parsed.map((e) => e.resourceEmail ?? e.resourceName)).size : 0
+  const uniqueProjects  = parsed ? new Set(parsed.map((e) => e.projectName)).size : 0
+
+  return (
+    <div className="border border-purple-200 rounded-lg p-5 space-y-4 bg-white">
+      <div className="flex items-center gap-2">
+        <span className="text-base font-semibold text-gray-700">Clockify</span>
+        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">CSV detallado</span>
+      </div>
+
+      <div
+        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
+        onDragOver={(e) => e.preventDefault()}
+        onClick={() => fileRef.current?.click()}
+        className="border-2 border-dashed border-purple-200 rounded-lg p-6 text-center cursor-pointer hover:border-purple-400 hover:bg-purple-50 transition-colors"
+      >
+        <Upload className="mx-auto mb-2 text-purple-400" size={28} />
+        <p className="text-sm text-gray-600 font-medium">Arrastrá el CSV de Clockify o hacé clic</p>
+        <p className="text-xs text-gray-400 mt-1">Formato: Proyecto, Usuario, Correo electrónico, Fecha de inicio, Duración (decimal)...</p>
+        <input ref={fileRef} type="file" accept=".csv" className="hidden"
+          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+      </div>
+
+      {parsed && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <FileText size={16} className="text-purple-500" />
+            <span className="font-medium">{fileName}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'Entradas agrupadas', value: parsed.length.toLocaleString() },
+              { label: 'Personas únicas', value: uniqueResources },
+              { label: 'Proyectos únicos', value: uniqueProjects },
+            ].map((s) => (
+              <div key={s.label} className="bg-purple-50 rounded-lg p-3 text-center">
+                <div className="text-xl font-bold text-purple-600">{s.value}</div>
+                <div className="text-xs text-gray-500 mt-1">{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400">Las horas del mismo recurso/proyecto/día se sumaron automáticamente.</p>
+          <button onClick={handleImport} disabled={importing}
+            className="w-full bg-purple-600 text-white py-2 rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 text-sm">
+            {importing ? 'Importando...' : `Importar ${parsed.length.toLocaleString()} entradas`}
+          </button>
+        </div>
+      )}
+
+      {result && <ImportResultBlock result={result} label="Importación Clockify" />}
+      {error && <div className="bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">{error}</div>}
+    </div>
+  )
+}
+
+// ─── SCC Excel Import Block ──────────────────────────────────────────────────
+
+function SccExcelImport() {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [year, setYear] = useState(new Date().getFullYear())
+  const [projectName, setProjectName] = useState('')
+  const [parsed, setParsed] = useState<{ entries: ParsedTimeEntry[]; resourceName: string } | null>(null)
+  const [fileName, setFileName] = useState('')
+  const [parsing, setParsing] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [result, setResult] = useState<ImportTimeEntriesResult | null>(null)
+  const [error, setError] = useState('')
+
+  const { data: projects } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => fetch('/api/projects').then((r) => r.json()),
+  })
+
+  const handleFile = useCallback(async (file: File) => {
+    setFileName(file.name); setResult(null); setError(''); setParsed(null)
+    if (!projectName) {
+      setError('Seleccioná un proyecto antes de cargar el archivo')
+      return
+    }
+    setParsing(true)
+    try {
+      const buf = await file.arrayBuffer()
+      const data = await parseSccExcel(buf, year, projectName)
+      setParsed(data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al parsear el archivo')
+    } finally {
+      setParsing(false)
+    }
+  }, [year, projectName])
+
+  const handleImport = async () => {
+    if (!parsed) return
+    setImporting(true); setError('')
+    try {
+      const res = await fetch('/api/time-entries/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries: parsed.entries }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al importar')
+      setResult(data); setParsed(null); setFileName('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al importar')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const regularCount = parsed ? parsed.entries.filter((e) => e.entryType !== 'extra').length : 0
+  const extraCount   = parsed ? parsed.entries.filter((e) => e.entryType === 'extra').length : 0
+
+  return (
+    <div className="border border-green-200 rounded-lg p-5 space-y-4 bg-white">
+      <div className="flex items-center gap-2">
+        <span className="text-base font-semibold text-gray-700">SCC Time Report</span>
+        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Excel (.xlsx)</span>
+      </div>
+
+      {/* Year + Project selectors */}
+      <div className="flex flex-wrap gap-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-gray-500 font-medium">Año</label>
+          <input
+            type="number"
+            value={year}
+            min={2020}
+            max={2035}
+            onChange={(e) => { setYear(Number(e.target.value)); setParsed(null) }}
+            className="border border-gray-300 rounded px-3 py-1.5 text-sm w-24"
+          />
+        </div>
+        <div className="flex flex-col gap-1 flex-1 min-w-48">
+          <label className="text-xs text-gray-500 font-medium">Proyecto</label>
+          <select
+            value={projectName}
+            onChange={(e) => { setProjectName(e.target.value); setParsed(null) }}
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+          >
+            <option value="">Seleccioná un proyecto...</option>
+            {(projects ?? []).map((p: { id: number; name: string }) => (
+              <option key={p.id} value={p.name}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Drop zone */}
+      <div
+        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
+        onDragOver={(e) => e.preventDefault()}
+        onClick={() => fileRef.current?.click()}
+        className="border-2 border-dashed border-green-200 rounded-lg p-6 text-center cursor-pointer hover:border-green-400 hover:bg-green-50 transition-colors"
+      >
+        <Upload className="mx-auto mb-2 text-green-400" size={28} />
+        {parsing ? (
+          <p className="text-sm text-gray-500">Procesando archivo...</p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-600 font-medium">Arrastrá el Excel SCC o hacé clic</p>
+            <p className="text-xs text-gray-400 mt-1">Formato: SCC Time Report (.xlsx)</p>
+          </>
+        )}
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+      </div>
+
+      {/* Preview */}
+      {parsed && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-sm text-gray-600 flex-wrap">
+            <FileText size={16} className="text-green-500" />
+            <span className="font-medium">{fileName}</span>
+            <span className="text-gray-400">• Recurso: <strong>{parsed.resourceName}</strong></span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: 'Total entradas', value: parsed.entries.length.toLocaleString() },
+              { label: 'Regulares', value: regularCount.toLocaleString() },
+              { label: 'Horas extra', value: extraCount.toLocaleString() },
+            ].map((s) => (
+              <div key={s.label} className="bg-green-50 rounded-lg p-3 text-center">
+                <div className="text-xl font-bold text-green-600">{s.value}</div>
+                <div className="text-xs text-gray-500 mt-1">{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Preview table */}
+          <div className="overflow-x-auto max-h-48 border rounded">
+            <table className="w-full text-sm">
+              <thead className="bg-green-600 text-white sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left">Persona</th>
+                  <th className="px-3 py-2 text-left">Proyecto</th>
+                  <th className="px-3 py-2 text-center">Tipo</th>
+                  <th className="px-3 py-2 text-left">Fecha</th>
+                  <th className="px-3 py-2 text-right">Horas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parsed.entries.slice(0, 15).map((e, i) => (
+                  <tr key={i} className="border-t hover:bg-gray-50">
+                    <td className="px-3 py-1.5">{e.resourceName}</td>
+                    <td className="px-3 py-1.5">{e.projectName}</td>
+                    <td className="px-3 py-1.5 text-center">
+                      {e.entryType === 'extra'
+                        ? <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded font-semibold">EX</span>
+                        : <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-semibold">REG</span>
+                      }
+                    </td>
+                    <td className="px-3 py-1.5">{formatDateDisplay(e.date)}</td>
+                    <td className="px-3 py-1.5 text-right">{formatHours(e.hours)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {parsed.entries.length > 15 && (
+              <p className="text-xs text-center text-gray-400 py-2">
+                ... y {parsed.entries.length - 15} entradas más
+              </p>
+            )}
+          </div>
+
+          <button onClick={handleImport} disabled={importing}
+            className="w-full bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 text-sm">
+            {importing ? 'Importando...' : `Importar ${parsed.entries.length.toLocaleString()} entradas`}
+          </button>
+        </div>
+      )}
+
+      {result && <ImportResultBlock result={result} label="Importación SCC" />}
+      {error && <div className="bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">{error}</div>}
+    </div>
+  )
+}
+
+// ─── Legacy CSV Import Block ─────────────────────────────────────────────────
+
+function LegacyCsvImport() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [parsed, setParsed] = useState<ParsedTimeEntry[] | null>(null)
   const [fileName, setFileName] = useState('')
@@ -189,13 +551,11 @@ function TabImport() {
     }
   }
 
-  // Stats for preview
   const uniqueResources = parsed ? new Set(parsed.map((e) => e.resourceName)).size : 0
   const uniqueProjects = parsed ? new Set(parsed.map((e) => e.projectName)).size : 0
 
   return (
-    <div className="space-y-6">
-      {/* Drop zone */}
+    <div className="space-y-4">
       <div
         onDrop={handleDrop}
         onDragOver={(e) => e.preventDefault()}
@@ -214,7 +574,6 @@ function TabImport() {
         />
       </div>
 
-      {/* Preview */}
       {parsed && (
         <div className="bg-white rounded-lg border border-gray-200 p-5 space-y-4">
           <div className="flex items-center gap-2 text-gray-700 font-medium">
@@ -233,8 +592,6 @@ function TabImport() {
               </div>
             ))}
           </div>
-
-          {/* Preview table */}
           <div className="overflow-x-auto max-h-48 border rounded">
             <table className="w-full text-sm">
               <thead className="bg-[#0170B9] text-white sticky top-0">
@@ -262,7 +619,6 @@ function TabImport() {
               </p>
             )}
           </div>
-
           <button
             onClick={handleImport}
             disabled={importing}
@@ -273,195 +629,12 @@ function TabImport() {
         </div>
       )}
 
-      {/* Result */}
-      {result && (
-        <div className="bg-white rounded-lg border border-gray-200 p-5 space-y-3">
-          <div className="flex items-center gap-2 text-green-700 font-semibold">
-            <CheckCircle2 size={20} />
-            Importación completada
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: 'Insertados', value: result.inserted, color: 'text-green-600' },
-              { label: 'Actualizados', value: result.updated, color: 'text-blue-600' },
-              { label: 'Saltados', value: result.skipped, color: 'text-gray-500' },
-            ].map((s) => (
-              <div key={s.label} className="border rounded-lg p-3 text-center">
-                <div className={`text-xl font-bold ${s.color}`}>{s.value.toLocaleString()}</div>
-                <div className="text-xs text-gray-500">{s.label}</div>
-              </div>
-            ))}
-          </div>
-          {result.unmatchedResources.length > 0 && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
-              <div className="flex items-center gap-2 text-yellow-700 font-medium mb-1">
-                <AlertTriangle size={16} /> Personas sin match en la DB
-              </div>
-              <div className="text-sm text-yellow-800">
-                {result.unmatchedResources.join(', ')}
-              </div>
-              <p className="text-xs text-yellow-600 mt-1">
-                Creá esos recursos en la sección Recursos y volvé a importar.
-              </p>
-            </div>
-          )}
-          {result.unmatchedProjects.length > 0 && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
-              <div className="flex items-center gap-2 text-yellow-700 font-medium mb-1">
-                <AlertTriangle size={16} /> Proyectos sin match en la DB
-              </div>
-              <div className="text-sm text-yellow-800">
-                {result.unmatchedProjects.join(', ')}
-              </div>
-              <p className="text-xs text-yellow-600 mt-1">
-                Creá esos proyectos en la sección Proyectos y volvé a importar.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
+      {result && <ImportResultBlock result={result} label="Importación CSV" />}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">
           {error}
         </div>
       )}
-
-      {/* Divider */}
-      <div className="border-t border-gray-200 pt-4">
-        <button
-          onClick={() => setShowClockify((v) => !v)}
-          className="flex items-center gap-2 text-sm font-medium text-purple-600 hover:text-purple-800"
-        >
-          <Upload size={15} />
-          {showClockify ? 'Ocultar importación Clockify' : 'Importar desde Clockify'}
-        </button>
-        {showClockify && <div className="mt-4"><ClockifyImport /></div>}
-      </div>
-
-      {/* Delete by month */}
-      <div className="border-t border-gray-200 pt-4">
-        <DeleteByMonth />
-      </div>
-    </div>
-  )
-}
-
-// ─── Clockify Import Block ───────────────────────────────────────────────────
-
-function ClockifyImport() {
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [parsed, setParsed] = useState<ParsedTimeEntry[] | null>(null)
-  const [fileName, setFileName] = useState('')
-  const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<ImportTimeEntriesResult | null>(null)
-  const [error, setError] = useState('')
-
-  const handleFile = useCallback((file: File) => {
-    setFileName(file.name); setResult(null); setError('')
-    const reader = new FileReader()
-    reader.onload = (e) => setParsed(parseClockifyCsv(e.target?.result as ArrayBuffer))
-    reader.readAsArrayBuffer(file)
-  }, [])
-
-  const handleImport = async () => {
-    if (!parsed) return
-    setImporting(true); setError('')
-    try {
-      const res = await fetch('/api/time-entries/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries: parsed }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? 'Error al importar')
-      setResult(data); setParsed(null); setFileName('')
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error')
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  const uniqueResources = parsed ? new Set(parsed.map((e) => e.resourceEmail ?? e.resourceName)).size : 0
-  const uniqueProjects  = parsed ? new Set(parsed.map((e) => e.projectName)).size : 0
-
-  return (
-    <div className="border border-gray-200 rounded-lg p-5 space-y-4 bg-white">
-      <div className="flex items-center gap-2">
-        <span className="text-base font-semibold text-gray-700">Clockify</span>
-        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">CSV detallado</span>
-      </div>
-
-      <div
-        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
-        onDragOver={(e) => e.preventDefault()}
-        onClick={() => fileRef.current?.click()}
-        className="border-2 border-dashed border-purple-200 rounded-lg p-6 text-center cursor-pointer hover:border-purple-400 hover:bg-purple-50 transition-colors"
-      >
-        <Upload className="mx-auto mb-2 text-purple-400" size={28} />
-        <p className="text-sm text-gray-600 font-medium">Arrastrá el CSV de Clockify o hacé clic</p>
-        <p className="text-xs text-gray-400 mt-1">Formato: Proyecto, Usuario, Correo electrónico, Fecha de inicio, Duración (decimal)...</p>
-        <input ref={fileRef} type="file" accept=".csv" className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-      </div>
-
-      {parsed && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-sm text-gray-600">
-            <FileText size={16} className="text-purple-500" />
-            <span className="font-medium">{fileName}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: 'Entradas agrupadas', value: parsed.length.toLocaleString() },
-              { label: 'Personas únicas', value: uniqueResources },
-              { label: 'Proyectos únicos', value: uniqueProjects },
-            ].map((s) => (
-              <div key={s.label} className="bg-purple-50 rounded-lg p-3 text-center">
-                <div className="text-xl font-bold text-purple-600">{s.value}</div>
-                <div className="text-xs text-gray-500 mt-1">{s.label}</div>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-400">Las horas del mismo recurso/proyecto/día se sumaron automáticamente.</p>
-          <button onClick={handleImport} disabled={importing}
-            className="w-full bg-purple-600 text-white py-2 rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 text-sm">
-            {importing ? 'Importando...' : `Importar ${parsed.length.toLocaleString()} entradas`}
-          </button>
-        </div>
-      )}
-
-      {result && (
-        <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-green-700 font-semibold text-sm">
-            <CheckCircle2 size={16} /> Importación Clockify completada
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { label: 'Insertados', value: result.inserted, color: 'text-green-600' },
-              { label: 'Actualizados', value: result.updated, color: 'text-blue-600' },
-              { label: 'Saltados', value: result.skipped, color: 'text-gray-500' },
-            ].map((s) => (
-              <div key={s.label} className="border rounded p-2 text-center">
-                <div className={`text-lg font-bold ${s.color}`}>{s.value.toLocaleString()}</div>
-                <div className="text-xs text-gray-500">{s.label}</div>
-              </div>
-            ))}
-          </div>
-          {result.unmatchedResources.length > 0 && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">
-              <div className="flex items-center gap-1 text-yellow-700 font-medium mb-1">
-                <AlertTriangle size={14} /> Personas sin match
-              </div>
-              <div className="text-yellow-800 text-xs">{result.unmatchedResources.join(', ')}</div>
-              <p className="text-xs text-yellow-600 mt-1">Verificá que el nombre del recurso en la DB coincida con el email de Clockify (ej: cuslenghi@zircon.tech → Claudio Uslenghi).</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {error && <div className="bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">{error}</div>}
     </div>
   )
 }
@@ -476,7 +649,7 @@ function DeleteByMonth() {
 
   const handleDelete = async () => {
     if (!month) return
-    const label = month // YYYY-MM
+    const label = month
     if (!confirm(`¿Eliminar TODAS las horas del mes ${label}? Esta acción no se puede deshacer.`)) return
     setDeleting(true); setError(''); setResult(null)
     try {
@@ -524,6 +697,42 @@ function DeleteByMonth() {
   )
 }
 
+// ─── Tab: Importar ───────────────────────────────────────────────────────────
+
+function TabImport() {
+  const [showLegacyCsv, setShowLegacyCsv] = useState(false)
+
+  return (
+    <div className="space-y-6">
+      {/* 1. Clockify — first, expanded */}
+      <ClockifyImport />
+
+      {/* 2. SCC Excel — second, expanded */}
+      <SccExcelImport />
+
+      {/* 3. Legacy CSV — collapsed */}
+      <div className="border-t border-gray-200 pt-4">
+        <button
+          onClick={() => setShowLegacyCsv((v) => !v)}
+          className="flex items-center gap-2 text-sm font-medium text-gray-400 hover:text-gray-600"
+        >
+          <ChevronDown
+            size={15}
+            className={`transition-transform ${showLegacyCsv ? '' : '-rotate-90'}`}
+          />
+          Importación CSV legacy (formato anterior)
+        </button>
+        {showLegacyCsv && <div className="mt-4"><LegacyCsvImport /></div>}
+      </div>
+
+      {/* 4. Delete by month */}
+      <div className="border-t border-gray-200 pt-4">
+        <DeleteByMonth />
+      </div>
+    </div>
+  )
+}
+
 // ─── Tab: Tabla ──────────────────────────────────────────────────────────────
 
 type RawEntry = {
@@ -532,6 +741,7 @@ type RawEntry = {
   projectId: number
   date: string
   hours: number
+  entryType: string
   resource: { id: number; name: string; color: string }
   project:  { id: number; name: string; color: string }
 }
@@ -547,18 +757,28 @@ function TabTabla() {
   const [month,      setMonth]      = useState('')
   const [page,       setPage]       = useState(1)
 
+  // sorting
+  const [sortBy,  setSortBy]  = useState<'date' | 'resource' | 'project'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
   // edit state
   const [editingId,  setEditingId]  = useState<number | null>(null)
   const [editForm,   setEditForm]   = useState<EditForm>({ resourceId: '', projectId: '', date: '', hours: '' })
   const [saving,     setSaving]     = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
 
+  // new entry state
+  const [isAdding,     setIsAdding]     = useState(false)
+  const [newForm,      setNewForm]      = useState({ resourceId: '', projectId: '', date: '', hours: '' })
+  const [addingSaving, setAddingSaving] = useState(false)
+
   const { data: resources } = useQuery({ queryKey: ['resources'], queryFn: () => fetch('/api/resources').then((r) => r.json()) })
   const { data: projects }  = useQuery({ queryKey: ['projects'],  queryFn: () => fetch('/api/projects').then((r) => r.json()) })
 
-  const rawKey = ['time-entries', 'raw', resourceId, projectId, dateFrom, dateTo, month, page]
+  const rawKey = ['time-entries', 'raw', resourceId, projectId, dateFrom, dateTo, month, page, sortBy, sortDir]
   const params = new URLSearchParams({
     view: 'raw', page: String(page), pageSize: '100',
+    sortBy, sortDir,
     ...(resourceId && { resourceId }),
     ...(projectId  && { projectId }),
     ...(month ? { month } : {}),
@@ -580,7 +800,23 @@ function TabTabla() {
     setResourceId(''); setProjectId(''); setDateFrom(''); setDateTo(''); setMonth(''); setPage(1)
   }
 
+  const handleSort = (col: 'date' | 'resource' | 'project') => {
+    if (sortBy === col) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(col)
+      setSortDir('asc')
+    }
+    setPage(1)
+  }
+
+  function SortIcon({ col }: { col: 'date' | 'resource' | 'project' }) {
+    if (sortBy !== col) return <ArrowUpDown size={12} className="opacity-40" />
+    return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+  }
+
   const startEdit = (e: RawEntry) => {
+    setIsAdding(false)
     setEditingId(e.id)
     setEditForm({
       resourceId: String(e.resourceId),
@@ -627,6 +863,37 @@ function TabTabla() {
     }
   }
 
+  const saveNew = async () => {
+    if (!newForm.resourceId || !newForm.projectId || !newForm.date || !newForm.hours) {
+      alert('Completar todos los campos')
+      return
+    }
+    setAddingSaving(true)
+    try {
+      const res = await fetch('/api/time-entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resourceId: Number(newForm.resourceId),
+          projectId:  Number(newForm.projectId),
+          date:       new Date(newForm.date + 'T12:00:00Z').toISOString(),
+          hours:      Number(newForm.hours),
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error ?? 'Error al guardar')
+      }
+      qc.invalidateQueries({ queryKey: ['time-entries'] })
+      setIsAdding(false)
+      setNewForm({ resourceId: '', projectId: '', date: '', hours: '' })
+    } catch (err) {
+      alert(`Error: ${(err as Error).message}`)
+    } finally {
+      setAddingSaving(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -666,20 +933,85 @@ function TabTabla() {
           <span className="text-sm text-gray-600">
             {isFetching ? 'Cargando...' : `${total.toLocaleString()} registros`}
           </span>
-          <span className="text-sm font-semibold text-[#0170B9]">Total: {formatHours(totalHours)} hs</span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-[#0170B9]">Total: {formatHours(totalHours)} hs</span>
+            <button
+              onClick={() => { setIsAdding(true); setEditingId(null) }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#0170B9] text-white rounded hover:bg-[#0160a0]"
+            >
+              <Plus size={14} /> Nueva entrada
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto max-h-[500px]">
           <table className="w-full text-sm">
             <thead className="bg-[#0170B9] text-white sticky top-0">
               <tr>
-                <th className="px-4 py-2 text-left">Persona</th>
-                <th className="px-4 py-2 text-left">Proyecto</th>
-                <th className="px-4 py-2 text-left">Fecha</th>
+                <th className="px-4 py-2 text-left cursor-pointer hover:bg-[#0161a5] select-none"
+                    onClick={() => handleSort('resource')}>
+                  <span className="inline-flex items-center gap-1">Persona <SortIcon col="resource" /></span>
+                </th>
+                <th className="px-4 py-2 text-left cursor-pointer hover:bg-[#0161a5] select-none"
+                    onClick={() => handleSort('project')}>
+                  <span className="inline-flex items-center gap-1">Proyecto <SortIcon col="project" /></span>
+                </th>
+                <th className="px-4 py-2 text-left cursor-pointer hover:bg-[#0161a5] select-none"
+                    onClick={() => handleSort('date')}>
+                  <span className="inline-flex items-center gap-1">Fecha <SortIcon col="date" /></span>
+                </th>
                 <th className="px-4 py-2 text-right">Horas</th>
                 <th className="px-3 py-2 w-20"></th>
               </tr>
             </thead>
             <tbody>
+              {/* New entry row */}
+              {isAdding && (
+                <tr className="border-t bg-green-50">
+                  <td className="px-2 py-1.5">
+                    <select value={newForm.resourceId}
+                      onChange={(e) => setNewForm((f) => ({ ...f, resourceId: e.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-full">
+                      <option value="">Persona...</option>
+                      {(resources ?? []).map((r: { id: number; name: string }) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <select value={newForm.projectId}
+                      onChange={(e) => setNewForm((f) => ({ ...f, projectId: e.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-full">
+                      <option value="">Proyecto...</option>
+                      {(projects ?? []).map((p: { id: number; name: string }) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="date" value={newForm.date}
+                      onChange={(e) => setNewForm((f) => ({ ...f, date: e.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-full" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" step="0.5" min="0.5" value={newForm.hours}
+                      onChange={(e) => setNewForm((f) => ({ ...f, hours: e.target.value }))}
+                      className="border rounded px-2 py-1 text-xs w-20 text-right" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-1">
+                      <button onClick={saveNew} disabled={addingSaving}
+                        className="p-1.5 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50" title="Guardar">
+                        <Check size={13} />
+                      </button>
+                      <button onClick={() => { setIsAdding(false); setNewForm({ resourceId: '', projectId: '', date: '', hours: '' }) }}
+                        className="p-1.5 rounded bg-gray-200 text-gray-600 hover:bg-gray-300" title="Cancelar">
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
               {entries.map((e) => (
                 editingId === e.id ? (
                   /* ── Edit row ── */
@@ -741,7 +1073,12 @@ function TabTabla() {
                       </span>
                     </td>
                     <td className="px-4 py-2 text-gray-600">{formatDateDisplay(e.date)}</td>
-                    <td className="px-4 py-2 text-right font-medium">{formatHours(e.hours)}</td>
+                    <td className="px-4 py-2 text-right font-medium">
+                      {formatHours(e.hours)}
+                      {e.entryType === 'extra' && (
+                        <span className="ml-1.5 text-[10px] bg-orange-100 text-orange-600 px-1 py-0.5 rounded font-semibold">EX</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1.5">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => startEdit(e)}
@@ -757,7 +1094,7 @@ function TabTabla() {
                   </tr>
                 )
               ))}
-              {entries.length === 0 && !isFetching && (
+              {entries.length === 0 && !isFetching && !isAdding && (
                 <tr>
                   <td colSpan={5} className="text-center py-8 text-gray-400">
                     No hay datos con los filtros seleccionados
@@ -866,7 +1203,6 @@ function TabResumen() {
         ))}
       </div>
 
-      {/* Tables */}
       {subView === 'resource' && (
         <SummaryTable
           data={(byResource ?? []).map((r) => ({
