@@ -7,7 +7,9 @@ import { useQuery } from '@tanstack/react-query'
 
 type ProjectPivot = {
   projectId: number; projectName: string; projectColor: string
-  dailyHours: Record<string, number>; total: number
+  dailyHours: Record<string, number>
+  dailyExtraHours: Record<string, number>
+  total: number
 }
 type ResourcePivot = {
   resourceId: number; resourceName: string; resourceColor: string
@@ -220,13 +222,22 @@ export default function DailyReportPage() {
                       }} />
                       {proj.projectName}
                     </td>
-                    {days.map((day) => (
-                      <td key={day} style={cellStyle(day)}>
-                        {proj.dailyHours[day] ? (
-                          <span style={{ color: '#374151' }}>{formatHours(proj.dailyHours[day])}</span>
-                        ) : ''}
-                      </td>
-                    ))}
+                    {days.map((day) => {
+                      const reg   = proj.dailyHours[day]
+                      const extra = proj.dailyExtraHours[day]
+                      return (
+                        <td key={day} style={{ ...cellStyle(day), padding: '1px 0' }}>
+                          {reg ? (
+                            <div style={{ color: '#374151', lineHeight: 1.2 }}>{formatHours(reg)}</div>
+                          ) : null}
+                          {extra ? (
+                            <div style={{ color: '#ea580c', fontSize: 9, lineHeight: 1.2, fontWeight: 'bold' }}>
+                              +{formatHours(extra)}
+                            </div>
+                          ) : null}
+                        </td>
+                      )
+                    })}
                     <td style={{
                       position: 'sticky', right: 0, zIndex: 5,
                       backgroundColor: 'white', borderLeft: '2px solid #e5e7eb',
