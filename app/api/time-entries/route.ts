@@ -177,13 +177,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ days, resources })
   }
 
-  // Default: raw with pagination
+  // Default: raw with pagination + dynamic sort
   const sortBy  = searchParams.get('sortBy')  ?? 'date'
   const sortDir = (searchParams.get('sortDir') ?? 'desc') as 'asc' | 'desc'
 
   const orderByMap: Record<string, object[]> = {
-    resource: [{ resource: { name: sortDir } }, { date: 'desc'  }],
-    project:  [{ project:  { name: sortDir } }, { date: 'desc'  }],
+    resource: [{ resource: { name: sortDir } }, { date: 'desc' }],
+    project:  [{ project:  { name: sortDir } }, { date: 'desc' }],
     date:     [{ date: sortDir },               { resourceId: 'asc' }],
   }
   const orderBy = orderByMap[sortBy] ?? orderByMap.date
@@ -202,4 +202,40 @@ export async function GET(req: NextRequest) {
   })
 
   return NextResponse.json({ total, page, pageSize, entries })
+}
+
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  const roles = (session?.user as { roles?: string[] })?.roles ?? []
+  if (!roles.includes('admin')) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const body = await req.json()
+  const { resourceId, projectId, date, hours } = body
+  if (!resourceId || !projectId || !date || !hours) {
+    return NextResponse.json(
+      { error: 'Campos requeridos: resourceId, projectId, date, hours' },
+      { status: 400 },
+    )
+  }
+
+  try {
+    const entry = await prisma.timeEntry.create({
+      data: {
+        resourceId: Number(resourceId),
+        projectId:  Number(projectId),
+        date:       new Date(date),
+        hours:      Number(hours),
+      },
+      include: {
+        resource: { select: { id: true, name: true, color: true } },
+        project:  { select: { id: true, name: true, color: true } },
+      },
+    })
+    return NextResponse.json(entry, { status: 201 })
+  } catch {
+    return NextResponse.json(
+      { error: 'Conflicto: ya existe una entrada para ese recurso/proyecto/día' },
+      { status: 409 },
+    )
+  }
 }
