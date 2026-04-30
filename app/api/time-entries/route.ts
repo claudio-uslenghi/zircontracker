@@ -191,9 +191,10 @@ export async function GET(req: NextRequest) {
   const total = await prisma.timeEntry.count({ where })
   const entries = await prisma.timeEntry.findMany({
     where,
-    include: {
+    select: {
+      id: true, resourceId: true, projectId: true, date: true, hours: true, entryType: true,
       resource: { select: { id: true, name: true, color: true } },
-      project: { select: { id: true, name: true, color: true } },
+      project:  { select: { id: true, name: true, color: true } },
     },
     orderBy,
     skip: (page - 1) * pageSize,
