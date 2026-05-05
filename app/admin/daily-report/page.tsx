@@ -96,7 +96,7 @@ export default function DailyReportPage() {
         }
       }
     }
-    const projects = Array.from(projectMap.entries()) // [[id, name], ...]
+    const projects = Array.from(projectMap.entries()).sort(([, a], [, b]) => a.localeCompare(b)) // [[id, name], ...]
 
     // Header row
     const header = ['Recurso', 'Total Horas', ...projects.map(([, name]) => name)]
