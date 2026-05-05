@@ -138,8 +138,18 @@ export async function GET(req: NextRequest) {
       orderBy: [{ resourceId: 'asc' }, { projectId: 'asc' }, { date: 'asc' }],
     })
 
-    type ProjectPivot = { projectId: number; projectName: string; projectColor: string; dailyHours: Record<string, number>; total: number }
-    type ResourcePivot = { resourceId: number; resourceName: string; resourceColor: string; projects: Map<number, ProjectPivot>; dailyTotals: Record<string, number>; total: number }
+    type ProjectPivot = {
+      projectId: number; projectName: string; projectColor: string
+      dailyHours: Record<string, number>       // regular hours per day
+      dailyExtraHours: Record<string, number>  // extra hours per day
+      total: number
+    }
+    type ResourcePivot = {
+      resourceId: number; resourceName: string; resourceColor: string
+      projects: Map<number, ProjectPivot>
+      dailyTotals: Record<string, number>      // regular + extra per day
+      total: number
+    }
 
     const resourceMap = new Map<number, ResourcePivot>()
     const daySet = new Set<string>()
@@ -159,11 +169,15 @@ export async function GET(req: NextRequest) {
       if (!res.projects.has(e.projectId)) {
         res.projects.set(e.projectId, {
           projectId: e.projectId, projectName: e.project.name, projectColor: e.project.color,
-          dailyHours: {}, total: 0,
+          dailyHours: {}, dailyExtraHours: {}, total: 0,
         })
       }
       const proj = res.projects.get(e.projectId)!
-      proj.dailyHours[dayKey] = (proj.dailyHours[dayKey] ?? 0) + e.hours
+      if (e.entryType === 'extra') {
+        proj.dailyExtraHours[dayKey] = (proj.dailyExtraHours[dayKey] ?? 0) + e.hours
+      } else {
+        proj.dailyHours[dayKey] = (proj.dailyHours[dayKey] ?? 0) + e.hours
+      }
       proj.total += e.hours
       res.dailyTotals[dayKey] = (res.dailyTotals[dayKey] ?? 0) + e.hours
       res.total += e.hours
