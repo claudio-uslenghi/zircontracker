@@ -2,6 +2,7 @@
 
 import { useState, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Download } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,53 @@ export default function DailyReportPage() {
     setDateTo(`${y}-${m}-${String(lastDay).padStart(2, '0')}`)
   }
 
+  function exportCsv() {
+    // Collect all unique projects across all resources (preserving first-seen order)
+    const projectMap = new Map<number, string>() // projectId → projectName
+    for (const res of pivotResources) {
+      for (const proj of res.projects) {
+        if (!projectMap.has(proj.projectId)) {
+          projectMap.set(proj.projectId, proj.projectName)
+        }
+      }
+    }
+    const projects = Array.from(projectMap.entries()) // [[id, name], ...]
+
+    // Header row
+    const header = ['Recurso', 'Total Horas', ...projects.map(([, name]) => name)]
+
+    // One row per resource
+    const rows = pivotResources.map((res) => {
+      const projHoursMap = new Map<number, number>()
+      for (const proj of res.projects) {
+        projHoursMap.set(proj.projectId, proj.total)
+      }
+      return [
+        res.resourceName,
+        formatHours(res.total),
+        ...projects.map(([id]) => {
+          const h = projHoursMap.get(id)
+          return h ? formatHours(h) : ''
+        }),
+      ]
+    })
+
+    // Encode as CSV (quote fields that contain commas)
+    const escape = (v: string) => (v.includes(',') ? `"${v}"` : v)
+    const csv = [header, ...rows]
+      .map((row) => row.map(escape).join(','))
+      .join('\n')
+
+    // BOM ensures Excel opens UTF-8 correctly; trigger download
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `reporte-diario-${dateFrom}-${dateTo}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="p-6 space-y-5">
       <div>
@@ -135,7 +183,18 @@ export default function DailyReportPage() {
       {/* Info bar */}
       <div className="flex items-center justify-between text-sm text-gray-500">
         <span>{isFetching ? 'Cargando...' : `${pivotResources.length} personas · ${days.length} días`}</span>
-        {grandTotal > 0 && <span className="font-semibold text-[#0170B9]">Total: {formatHours(grandTotal)} hs</span>}
+        <div className="flex items-center gap-3">
+          {grandTotal > 0 && <span className="font-semibold text-[#0170B9]">Total: {formatHours(grandTotal)} hs</span>}
+          {pivotResources.length > 0 && (
+            <button
+              onClick={exportCsv}
+              className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-[#0170B9] border border-gray-300 hover:border-[#0170B9] rounded px-3 py-1.5 transition-colors"
+            >
+              <Download size={14} />
+              Exportar CSV
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Pivot table */}
