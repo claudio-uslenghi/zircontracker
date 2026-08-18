@@ -25,6 +25,15 @@ function isWeekend(dayKey: string) {
   return dow === 0 || dow === 6
 }
 
+// /api/me/* returns a JSON error body on 403/404 — surface it as a query
+// error with a clear message instead of silently showing an empty report.
+async function fetchMeJson(url: string) {
+  const res = await fetch(url)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error ?? 'No se pudieron cargar los datos.')
+  return body
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function MiReportePage() {
@@ -49,10 +58,11 @@ export default function MiReportePage() {
     ...(dateTo && { dateTo }),
   })
 
-  const { data: pivotData, isFetching } = useQuery<PivotData>({
+  const { data: pivotData, isFetching, error } = useQuery<PivotData>({
     queryKey: ['me-time-entries', 'pivot', projectId, dateFrom, dateTo],
-    queryFn: () => fetch(`/api/me/time-entries?${params}`).then((r) => r.json()),
+    queryFn: () => fetchMeJson(`/api/me/time-entries?${params}`),
     enabled: !!dateFrom && !!dateTo,
+    retry: false,
   })
 
   const days = pivotData?.days ?? []
@@ -111,6 +121,12 @@ export default function MiReportePage() {
         </button>
       </div>
 
+      {error ? (
+        <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-lg p-4 text-sm">
+          {(error as Error).message}
+        </div>
+      ) : (
+        <>
       {/* Info bar */}
       <div className="flex items-center justify-between text-sm text-gray-500">
         <span>{isFetching ? 'Cargando...' : `${projectRows.length} proyectos · ${days.length} días`}</span>
@@ -244,6 +260,8 @@ export default function MiReportePage() {
           )}
         </table>
       </div>
+      </>
+      )}
     </div>
   )
 }

@@ -10,14 +10,25 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const resource = await prisma.resource.create({
-    data: {
-      name: body.name,
-      country: body.country,
-      color: body.color ?? '#4472C4',
-      capacityH: Number(body.capacityH ?? 8),
-    },
-  })
+
+  let resource
+  try {
+    resource = await prisma.resource.create({
+      data: {
+        name: body.name,
+        email: body.email?.trim() || null,
+        country: body.country,
+        color: body.color ?? '#4472C4',
+        capacityH: Number(body.capacityH ?? 8),
+      },
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Error'
+    if (msg.includes('Unique constraint')) {
+      return NextResponse.json({ error: 'Ya existe un recurso con ese nombre o email' }, { status: 409 })
+    }
+    throw err
+  }
 
   // Auto-assign country holidays to the new resource
   const countryHolidays = await prisma.countryHoliday.findMany({

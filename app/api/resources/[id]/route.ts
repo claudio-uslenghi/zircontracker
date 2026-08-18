@@ -24,15 +24,25 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const existing = await prisma.resource.findUnique({ where: { id } })
   const countryChanged = existing && existing.country !== body.country
 
-  const resource = await prisma.resource.update({
-    where: { id },
-    data: {
-      name: body.name,
-      country: body.country,
-      color: body.color,
-      capacityH: Number(body.capacityH ?? 8),
-    },
-  })
+  let resource
+  try {
+    resource = await prisma.resource.update({
+      where: { id },
+      data: {
+        name: body.name,
+        email: body.email?.trim() || null,
+        country: body.country,
+        color: body.color,
+        capacityH: Number(body.capacityH ?? 8),
+      },
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Error'
+    if (msg.includes('Unique constraint')) {
+      return NextResponse.json({ error: 'Ya existe un recurso con ese nombre o email' }, { status: 409 })
+    }
+    throw err
+  }
 
   if (countryChanged) {
     await syncHolidaysForResource(id, body.country)

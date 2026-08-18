@@ -36,7 +36,11 @@ export default function HolidaysPage() {
 
   const { data: myResource } = useQuery<Resource>({
     queryKey: ['me-resource'],
-    queryFn: () => fetch('/api/me/resource').then((r) => r.json()),
+    queryFn: async () => {
+      const res = await fetch('/api/me/resource')
+      if (!res.ok) return undefined as unknown as Resource
+      return res.json()
+    },
     enabled: !isAdmin,
     retry: false,
   })
