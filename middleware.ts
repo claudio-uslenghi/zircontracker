@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from 'next/server'
 
 const PUBLIC_PATHS = ['/login', '/api/auth', '/unauthorized']
 
+// Accessible to any authenticated user regardless of their PagePermission
+// matrix — e.g. changing your own password isn't a "page" you're granted.
+const ALWAYS_ALLOWED_AUTHENTICATED = ['/perfil']
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
@@ -28,10 +32,28 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  const roles = (token.roles as string[]) ?? []
+  const isAdmin = roles.includes('admin')
+
   // Admin pages: require admin role in JWT
   if (pathname.startsWith('/admin')) {
-    const roles = (token.roles as string[]) ?? []
-    if (!roles.includes('admin')) {
+    if (!isAdmin) {
+      return NextResponse.redirect(new URL('/unauthorized', req.url))
+    }
+    return NextResponse.next()
+  }
+
+  // Everyone gets a fixed set of self-service pages regardless of PagePermission.
+  if (ALWAYS_ALLOWED_AUTHENTICATED.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next()
+  }
+
+  // Non-admin pages: gated by the PagePermission matrix, snapshotted into the
+  // JWT at sign-in (see lib/auth-options.ts). Admin bypasses this check.
+  if (!isAdmin) {
+    const allowedPages = (token.allowedPages as string[]) ?? []
+    const allowed = allowedPages.some((p) => pathname.startsWith(p))
+    if (!allowed) {
       return NextResponse.redirect(new URL('/unauthorized', req.url))
     }
   }

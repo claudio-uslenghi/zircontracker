@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSession } from 'next-auth/react'
 import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Search, X } from 'lucide-react'
 import ProjectModal from '@/components/modals/ProjectModal'
 import { formatDate } from '@/lib/date-utils'
@@ -37,6 +38,8 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
 
 export default function ProjectsPage() {
   const qc = useQueryClient()
+  const { data: session } = useSession()
+  const isAdmin = ((session?.user as { roles?: string[] })?.roles ?? []).includes('admin')
   const [showModal, setShowModal]     = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
   const [sortKey, setSortKey]           = useState<SortKey>('name')
@@ -114,13 +117,15 @@ export default function ProjectsPage() {
             {filtered.length} de {projects.length} proyectos
           </p>
         </div>
-        <button
-          onClick={() => { setEditProject(null); setShowModal(true) }}
-          className="flex items-center gap-2 px-4 py-2 bg-[#0170B9] text-white rounded-lg hover:bg-[#005a94] transition-colors text-sm font-medium"
-        >
-          <Plus size={16} />
-          Nuevo Proyecto
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => { setEditProject(null); setShowModal(true) }}
+            className="flex items-center gap-2 px-4 py-2 bg-[#0170B9] text-white rounded-lg hover:bg-[#005a94] transition-colors text-sm font-medium"
+          >
+            <Plus size={16} />
+            Nuevo Proyecto
+          </button>
+        )}
       </div>
 
       {/* Filters */}
@@ -200,13 +205,13 @@ export default function ProjectsPage() {
                   <Th col="costPerHour"    label="$/h"    className="text-right" />
                   <Th col="totalCost"      label="Costo Total" className="text-right" />
                   <th className="px-4 py-3">Notas</th>
-                  <th className="px-4 py-3 text-center">Acciones</th>
+                  {isAdmin && <th className="px-4 py-3 text-center">Acciones</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-gray-400">
+                    <td colSpan={isAdmin ? 10 : 9} className="px-4 py-10 text-center text-gray-400">
                       No hay proyectos que coincidan con el filtro
                     </td>
                   </tr>
@@ -243,24 +248,26 @@ export default function ProjectsPage() {
                     <td className="px-4 py-3 text-gray-500 max-w-[160px] truncate" title={p.notes}>
                       {p.notes || '—'}
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => { setEditProject(p); setShowModal(true) }}
-                          className="text-blue-500 hover:text-blue-700 transition-colors"
-                          title="Editar"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          onClick={() => deleteProject(p.id)}
-                          className="text-red-400 hover:text-red-600 transition-colors"
-                          title="Eliminar"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
+                    {isAdmin && (
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => { setEditProject(p); setShowModal(true) }}
+                            className="text-blue-500 hover:text-blue-700 transition-colors"
+                            title="Editar"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => deleteProject(p.id)}
+                            className="text-red-400 hover:text-red-600 transition-colors"
+                            title="Eliminar"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -274,7 +281,7 @@ export default function ProjectsPage() {
                   <td className="px-4 py-3 text-right">
                     {totalCost > 0 ? `$${totalCost.toLocaleString()}` : '—'}
                   </td>
-                  <td colSpan={2} />
+                  <td colSpan={isAdmin ? 2 : 1} />
                 </tr>
               </tfoot>
             </table>

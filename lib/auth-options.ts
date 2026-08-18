@@ -35,18 +35,30 @@ export const authOptions: NextAuthOptions = {
   ],
   session: { strategy: 'jwt' },
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user) {
-        token.roles = (user as { roles?: string[] }).roles ?? []
+        const roles = (user as { roles?: string[] }).roles ?? []
+        token.roles = roles
         token.id = user.id
+
+        // Snapshot of pages this user's roles can access, computed once at
+        // sign-in (same refresh cadence as `roles`). Admins bypass this
+        // entirely — see checkPagePermission / middleware.
+        const perms = await prisma.pagePermission.findMany({
+          where: { role: { name: { in: roles } } },
+          select: { page: true },
+        })
+        token.allowedPages = Array.from(new Set(perms.map((p) => p.page)))
       }
       return token
     },
     session({ session, token }) {
       if (session.user) {
-        ;(session.user as { roles?: string[]; id?: string }).roles =
+        ;(session.user as { roles?: string[]; id?: string; allowedPages?: string[] }).roles =
           (token.roles as string[]) ?? []
         ;(session.user as { id?: string }).id = token.id as string
+        ;(session.user as { allowedPages?: string[] }).allowedPages =
+          (token.allowedPages as string[]) ?? []
       }
       return session
     },

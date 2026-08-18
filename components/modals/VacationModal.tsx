@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -9,7 +9,10 @@ import { eachDayOfInterval, isWeekend, parseISO } from 'date-fns'
 import type { Resource } from '@/types'
 
 const schema = z.object({
-  resourceId: z.coerce.number().min(1),
+  // Optional here: when lockedResource is set, resourceId never comes from
+  // the form (no field is registered for it) — onSubmit fills it in from
+  // the prop instead. Required only for the admin picker path.
+  resourceId: z.coerce.number().optional(),
   startDate: z.string().min(1),
   endDate: z.string().min(1),
   notes: z.string().optional(),
@@ -20,13 +23,19 @@ type FormData = z.infer<typeof schema>
 interface Props {
   open: boolean
   onClose: () => void
+  // When set (self-service, non-admin), the resource picker is hidden and
+  // every submission is locked to this resourceId — the resource picker is
+  // for admins managing anyone's vacations.
+  lockedResource?: { id: number; name: string }
 }
 
-export default function VacationModal({ open, onClose }: Props) {
+export default function VacationModal({ open, onClose, lockedResource }: Props) {
   const qc = useQueryClient()
+  const [error, setError] = useState('')
   const { data: resources = [] } = useQuery<Resource[]>({
     queryKey: ['resources'],
     queryFn: () => fetch('/api/resources').then((r) => r.json()),
+    enabled: !lockedResource,
   })
 
   const { register, handleSubmit, reset, watch, formState: { isSubmitting } } = useForm<FormData>({
@@ -43,16 +52,25 @@ export default function VacationModal({ open, onClose }: Props) {
   }, [start, end])
 
   const onSubmit = async (data: FormData) => {
+    setError('')
+    const resourceId = lockedResource ? lockedResource.id : data.resourceId
+    if (!resourceId) {
+      setError('Seleccioná un recurso.')
+      return
+    }
     const res = await fetch('/api/vacations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ resourceId, startDate: data.startDate, endDate: data.endDate, notes: data.notes }),
     })
     if (res.ok) {
       qc.invalidateQueries({ queryKey: ['vacations'] })
       qc.invalidateQueries({ queryKey: ['gantt'] })
       reset()
       onClose()
+    } else {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error ?? 'No se pudo guardar la vacación.')
     }
   }
 
@@ -66,13 +84,16 @@ export default function VacationModal({ open, onClose }: Props) {
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
         <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Recurso *</label>
-            <select {...register('resourceId')} className="w-full border rounded px-3 py-2 text-sm">
-              <option value="">Seleccionar...</option>
-              {resources.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-          </div>
+          {!lockedResource && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Recurso *</label>
+              <select {...register('resourceId')} className="w-full border rounded px-3 py-2 text-sm">
+                <option value="">Seleccionar...</option>
+                {resources.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+          )}
+          {error && <p className="text-red-500 text-sm">{error}</p>}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Desde *</label>

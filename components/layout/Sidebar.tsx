@@ -28,6 +28,8 @@ const NAV_ITEMS = [
   { href: '/projects', icon: FolderKanban, label: 'Proyectos' },
   { href: '/resources', icon: Users, label: 'Recursos' },
   { href: '/holidays', icon: CalendarDays, label: 'Feriados & Vacaciones' },
+  { href: '/mis-horas', icon: Clock, label: 'Mis Horas' },
+  { href: '/mi-reporte', icon: CalendarClock, label: 'Mi Reporte' },
 ]
 
 const ADMIN_ITEMS = [
@@ -47,7 +49,12 @@ export default function Sidebar() {
 
   const roles = (session?.user as { roles?: string[] })?.roles ?? []
   const isAdmin = roles.includes('admin')
+  const allowedPages = (session?.user as { allowedPages?: string[] })?.allowedPages ?? []
   const userName = session?.user?.name ?? session?.user?.email ?? ''
+
+  const visibleNavItems = isAdmin
+    ? NAV_ITEMS
+    : NAV_ITEMS.filter((item) => allowedPages.includes(item.href))
 
   return (
     <aside
@@ -77,7 +84,7 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex flex-col gap-0.5 p-2 flex-1 overflow-y-auto">
-        {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
+        {visibleNavItems.map(({ href, icon: Icon, label }) => {
           const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
           return (
             <Link
@@ -138,15 +145,21 @@ export default function Sidebar() {
       <div className="p-3 border-t border-white/20">
         {!collapsed ? (
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0 text-xs font-bold uppercase">
-              {userName.charAt(0)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-white truncate">{userName}</p>
-              <p className="text-xs text-white/50 truncate">
-                {roles.join(', ')}
-              </p>
-            </div>
+            <Link
+              href="/perfil"
+              className="flex items-center gap-2 flex-1 min-w-0 rounded px-1 py-1 -mx-1 hover:bg-white/10 transition-colors"
+              title="Mi Perfil"
+            >
+              <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0 text-xs font-bold uppercase">
+                {userName.charAt(0)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-white truncate">{userName}</p>
+                <p className="text-xs text-white/50 truncate">
+                  {roles.join(', ')}
+                </p>
+              </div>
+            </Link>
             <button
               onClick={() => signOut({ callbackUrl: '/login' })}
               title="Cerrar sesión"

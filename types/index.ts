@@ -1,6 +1,7 @@
 export interface Resource {
   id: number
   name: string
+  email: string | null
   country: string
   color: string
   capacityH: number
@@ -76,15 +77,25 @@ export interface CellData {
   label?: string
 }
 
+export interface Task {
+  id: number
+  projectId: number
+  name: string
+  active: boolean
+  createdAt: string
+}
+
 export interface TimeEntry {
   id: number
   resourceId: number
   projectId: number
+  taskId: number | null
   date: string
   hours: number
   entryType: string
   resource?: Pick<Resource, 'id' | 'name' | 'color'>
   project?: Pick<Project, 'id' | 'name' | 'color'>
+  task?: Pick<Task, 'id' | 'name'> | null
 }
 
 export interface TimeEntryByResource {

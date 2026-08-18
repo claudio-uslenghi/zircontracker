@@ -2,13 +2,14 @@
 
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSession } from 'next-auth/react'
 import { eachDayOfInterval, isWeekend, parseISO } from 'date-fns'
 import { formatDate } from '@/lib/date-utils'
 import { Plus, Trash2, Upload, Download, Filter, Pencil } from 'lucide-react'
 import HolidayModal from '@/components/modals/HolidayModal'
 import VacationModal from '@/components/modals/VacationModal'
 import CsvImportModal from '@/components/modals/CsvImportModal'
-import type { Vacation, CountryHoliday } from '@/types'
+import type { Resource, Vacation, CountryHoliday } from '@/types'
 import { FLAG_BY_NAME } from '@/lib/countries'
 
 function countryLabel(name: string) {
@@ -25,11 +26,20 @@ function calcWorkingDays(start: string, end: string) {
 
 export default function HolidaysPage() {
   const qc = useQueryClient()
+  const { data: session } = useSession()
+  const isAdmin = ((session?.user as { roles?: string[] })?.roles ?? []).includes('admin')
   const [showHolidayModal, setShowHolidayModal] = useState(false)
   const [editHoliday, setEditHoliday] = useState<CountryHoliday | null>(null)
   const [showVacationModal, setShowVacationModal] = useState(false)
   const [showCsvModal, setShowCsvModal] = useState(false)
   const [filterCountry, setFilterCountry] = useState<string>('')
+
+  const { data: myResource } = useQuery<Resource>({
+    queryKey: ['me-resource'],
+    queryFn: () => fetch('/api/me/resource').then((r) => r.json()),
+    enabled: !isAdmin,
+    retry: false,
+  })
 
   const { data: countryHolidays = [] } = useQuery<CountryHoliday[]>({
     queryKey: ['country-holidays'],
@@ -84,7 +94,9 @@ export default function HolidaysPage() {
           <h2 className="text-lg font-semibold text-gray-700">Vacaciones programadas</h2>
           <button
             onClick={() => setShowVacationModal(true)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-[#0170B9] text-white rounded-lg hover:bg-[#005a94] transition-colors text-sm"
+            disabled={!isAdmin && !myResource}
+            title={!isAdmin && !myResource ? 'Tu usuario no está vinculado a ningún recurso' : undefined}
+            className="flex items-center gap-2 px-3 py-1.5 bg-[#0170B9] text-white rounded-lg hover:bg-[#005a94] transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Plus size={14} /> Agregar vacación
           </button>
@@ -119,9 +131,11 @@ export default function HolidaysPage() {
                   <td className="px-4 py-3 text-right font-medium">{calcWorkingDays(v.startDate, v.endDate)} días</td>
                   <td className="px-4 py-3 text-gray-500">{v.notes || '—'}</td>
                   <td className="px-4 py-3 text-center">
-                    <button onClick={() => deleteVacation(v.id)} className="text-red-400 hover:text-red-600">
-                      <Trash2 size={14} />
-                    </button>
+                    {(isAdmin || myResource?.id === v.resourceId) && (
+                      <button onClick={() => deleteVacation(v.id)} className="text-red-400 hover:text-red-600">
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -155,20 +169,24 @@ export default function HolidaysPage() {
             >
               <Download size={14} /> Descargar
             </button>
-            {/* Import CSV */}
-            <button
-              onClick={() => setShowCsvModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#3a3a3a] text-white rounded-lg hover:bg-[#222] transition-colors text-sm"
-            >
-              <Upload size={14} /> Importar CSV
-            </button>
-            {/* Add single */}
-            <button
-              onClick={() => { setEditHoliday(null); setShowHolidayModal(true) }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0170B9] text-white rounded-lg hover:bg-[#005a94] transition-colors text-sm"
-            >
-              <Plus size={14} /> Agregar
-            </button>
+            {isAdmin && (
+              <>
+                {/* Import CSV */}
+                <button
+                  onClick={() => setShowCsvModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#3a3a3a] text-white rounded-lg hover:bg-[#222] transition-colors text-sm"
+                >
+                  <Upload size={14} /> Importar CSV
+                </button>
+                {/* Add single */}
+                <button
+                  onClick={() => { setEditHoliday(null); setShowHolidayModal(true) }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0170B9] text-white rounded-lg hover:bg-[#005a94] transition-colors text-sm"
+                >
+                  <Plus size={14} /> Agregar
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -184,7 +202,7 @@ export default function HolidaysPage() {
                   <th className="px-4 py-3 text-left">País</th>
                   <th className="px-4 py-3 text-left">Fecha</th>
                   <th className="px-4 py-3 text-left">Nombre</th>
-                  <th className="px-4 py-3 text-center">Acciones</th>
+                  {isAdmin && <th className="px-4 py-3 text-center">Acciones</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -192,7 +210,7 @@ export default function HolidaysPage() {
                   <>
                     {/* Country sub-header */}
                     <tr key={`header-${country}`} className="bg-gray-50">
-                      <td colSpan={4} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      <td colSpan={isAdmin ? 4 : 3} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         {countryLabel(country)} — {holidays.length} feriado{holidays.length !== 1 ? 's' : ''}
                       </td>
                     </tr>
@@ -201,24 +219,26 @@ export default function HolidaysPage() {
                         <td className="px-4 py-3 text-gray-500">{countryLabel(h.country)}</td>
                         <td className="px-4 py-3 font-medium">{formatDate(h.date)}</td>
                         <td className="px-4 py-3 text-gray-700">{h.name}</td>
-                        <td className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            <button
-                              onClick={() => { setEditHoliday(h); setShowHolidayModal(true) }}
-                              className="text-blue-400 hover:text-blue-600 transition-colors"
-                              title="Editar"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                            <button
-                              onClick={() => deleteCountryHoliday(h.id)}
-                              className="text-red-400 hover:text-red-600 transition-colors"
-                              title="Eliminar"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </td>
+                        {isAdmin && (
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => { setEditHoliday(h); setShowHolidayModal(true) }}
+                                className="text-blue-400 hover:text-blue-600 transition-colors"
+                                title="Editar"
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                onClick={() => deleteCountryHoliday(h.id)}
+                                className="text-red-400 hover:text-red-600 transition-colors"
+                                title="Eliminar"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </>
@@ -233,9 +253,15 @@ export default function HolidaysPage() {
         </p>
       </section>
 
-      <HolidayModal open={showHolidayModal} onClose={() => { setShowHolidayModal(false); setEditHoliday(null) }} editHoliday={editHoliday} />
-      <VacationModal open={showVacationModal} onClose={() => setShowVacationModal(false)} />
-      <CsvImportModal open={showCsvModal} onClose={() => setShowCsvModal(false)} />
+      {isAdmin && (
+        <HolidayModal open={showHolidayModal} onClose={() => { setShowHolidayModal(false); setEditHoliday(null) }} editHoliday={editHoliday} />
+      )}
+      <VacationModal
+        open={showVacationModal}
+        onClose={() => setShowVacationModal(false)}
+        lockedResource={isAdmin ? undefined : (myResource ? { id: myResource.id, name: myResource.name } : undefined)}
+      />
+      {isAdmin && <CsvImportModal open={showCsvModal} onClose={() => setShowCsvModal(false)} />}
     </div>
   )
 }
