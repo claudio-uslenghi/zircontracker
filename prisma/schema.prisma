@@ -11,6 +11,7 @@ datasource db {
 model Resource {
   id        Int      @id @default(autoincrement())
   name      String   @unique
+  email     String?  @unique
   country   String
   color     String   @default("#4472C4")
   capacityH Int      @default(8)
@@ -41,6 +42,7 @@ model Project {
   assignments   Assignment[]
   timeEntries   TimeEntry[]
   resourceRates ProjectResourceRate[]
+  tasks         Task[]
 }
 
 model Assignment {
@@ -126,18 +128,31 @@ model PagePermission {
   @@unique([page, roleId])
 }
 
+model Task {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  timeEntries TimeEntry[]
+}
+
 model TimeEntry {
   id         Int      @id @default(autoincrement())
   resourceId Int
   projectId  Int
+  taskId     Int?
   date       DateTime
   hours      Float
   entryType  String   @default("regular")
 
   resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
   project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task     Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
-  @@unique([resourceId, projectId, date, entryType])
+  @@unique([resourceId, projectId, date, entryType, taskId])
 }
 
 model ProjectResourceRate {

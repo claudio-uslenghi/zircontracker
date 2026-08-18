@@ -9,6 +9,8 @@ const ALL_PAGES = [
   { path: '/projects', label: 'Proyectos' },
   { path: '/resources', label: 'Recursos' },
   { path: '/holidays', label: 'Feriados' },
+  { path: '/mis-horas', label: 'Mis Horas' },
+  { path: '/mi-reporte', label: 'Mi Reporte' },
   { path: '/admin/users', label: 'Usuarios' },
   { path: '/admin/roles', label: 'Roles' },
   { path: '/admin/permissions', label: 'Permisos' },

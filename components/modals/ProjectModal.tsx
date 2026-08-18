@@ -6,7 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { PROJECT_PALETTE, RESOURCE_PROFILES } from '@/types'
-import type { Project, Resource, ProjectResourceRate } from '@/types'
+import type { Project, Resource, ProjectResourceRate, Task } from '@/types'
 
 const schema = z.object({
   name: z.string().min(1, 'Requerido'),
@@ -33,6 +33,7 @@ interface Props {
 export default function ProjectModal({ open, onClose, editProject }: Props) {
   const qc = useQueryClient()
   const [resourceRates, setResourceRates] = useState<ProjectResourceRate[]>([])
+  const [newTaskName, setNewTaskName] = useState('')
 
   const {
     register,
@@ -60,6 +61,38 @@ export default function ProjectModal({ open, onClose, editProject }: Props) {
     queryFn: () => fetch('/api/resources').then((r) => r.json()),
     enabled: open,
   })
+
+  const { data: tasks = [] } = useQuery<Task[]>({
+    queryKey: ['tasks', editProject?.id],
+    queryFn: () => fetch(`/api/tasks?projectId=${editProject!.id}`).then((r) => r.json()),
+    enabled: open && !!editProject,
+  })
+
+  async function addTask() {
+    if (!newTaskName.trim() || !editProject) return
+    await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: editProject.id, name: newTaskName.trim() }),
+    })
+    setNewTaskName('')
+    qc.invalidateQueries({ queryKey: ['tasks', editProject.id] })
+  }
+
+  async function toggleTaskActive(task: Task) {
+    await fetch(`/api/tasks/${task.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: !task.active }),
+    })
+    qc.invalidateQueries({ queryKey: ['tasks', editProject?.id] })
+  }
+
+  async function deleteTask(task: Task) {
+    if (!confirm(`¿Eliminar la tarea "${task.name}"? Las horas ya cargadas contra ella no se pierden.`)) return
+    await fetch(`/api/tasks/${task.id}`, { method: 'DELETE' })
+    qc.invalidateQueries({ queryKey: ['tasks', editProject?.id] })
+  }
 
   useEffect(() => {
     if (editProject) {
@@ -312,6 +345,61 @@ export default function ProjectModal({ open, onClose, editProject }: Props) {
               </div>
             )}
             <p className="text-xs text-gray-400 mt-2">Tarifa 0 = sin costo · Desmarcar ✓ = no facturable</p>
+          </div>
+
+          {/* Tasks (for self-service time tracking) */}
+          <div className="border rounded-lg p-3 bg-gray-50">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Tareas</label>
+            {!editProject ? (
+              <p className="text-xs text-gray-400">Guardá el proyecto primero para poder agregarle tareas.</p>
+            ) : (
+              <>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={newTaskName}
+                    onChange={(e) => setNewTaskName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask() } }}
+                    placeholder="Nombre de la tarea"
+                    className="flex-1 border rounded px-2 py-1.5 text-xs bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={addTask}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2"
+                  >
+                    + Agregar
+                  </button>
+                </div>
+                {tasks.length === 0 ? (
+                  <p className="text-xs text-gray-400">Sin tareas configuradas</p>
+                ) : (
+                  <div className="space-y-1">
+                    {tasks.map((t) => (
+                      <div key={t.id} className="flex items-center gap-2 text-xs bg-white border rounded px-2 py-1.5">
+                        <span className={`flex-1 ${t.active ? '' : 'text-gray-400 line-through'}`}>{t.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleTaskActive(t)}
+                          className="text-gray-400 hover:text-gray-700"
+                          title={t.active ? 'Desactivar' : 'Activar'}
+                        >
+                          {t.active ? '●' : '○'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTask(t)}
+                          className="text-red-400 hover:text-red-600"
+                          title="Eliminar"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
