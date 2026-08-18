@@ -32,6 +32,15 @@ function isWeekendDay(dayKey: string) {
   return dow === 0 || dow === 6
 }
 
+// /api/me/* returns a JSON error body (not an array) on 403/404 — surface it
+// as a query error instead of letting downstream array methods crash the page.
+async function fetchMeJson(url: string) {
+  const res = await fetch(url)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error ?? 'No se pudieron cargar los datos.')
+  return body
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function MisHorasPage() {
@@ -63,11 +72,11 @@ export default function MisHorasPage() {
     enabled: !!projectId,
   })
 
-  const { data: entries = [], isFetching } = useQuery<TimeEntry[]>({
+  const { data: entries = [], isFetching, error: entriesError } = useQuery<TimeEntry[]>({
     queryKey: ['me-time-entries', projectId, weekStart],
-    queryFn: () =>
-      fetch(`/api/me/time-entries?projectId=${projectId}&dateFrom=${days[0]}&dateTo=${days[6]}`).then((r) => r.json()),
+    queryFn: () => fetchMeJson(`/api/me/time-entries?projectId=${projectId}&dateFrom=${days[0]}&dateTo=${days[6]}`),
     enabled: !!projectId,
+    retry: false,
   })
 
   const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
@@ -133,11 +142,11 @@ export default function MisHorasPage() {
     return list
   }, [tmYear, tmMonth, tmDaysInMonth])
 
-  const { data: tmEntries = EMPTY_ENTRIES, dataUpdatedAt: tmEntriesUpdatedAt } = useQuery<TimeEntry[]>({
+  const { data: tmEntries = EMPTY_ENTRIES, dataUpdatedAt: tmEntriesUpdatedAt, error: tmEntriesError } = useQuery<TimeEntry[]>({
     queryKey: ['me-time-entries-tm', projectId, tmYm],
-    queryFn: () =>
-      fetch(`/api/me/time-entries?projectId=${projectId}&dateFrom=${tmMonthStart}&dateTo=${tmMonthEnd}`).then((r) => r.json()),
+    queryFn: () => fetchMeJson(`/api/me/time-entries?projectId=${projectId}&dateFrom=${tmMonthStart}&dateTo=${tmMonthEnd}`),
     enabled: !!projectId && mode === 'tm',
+    retry: false,
   })
 
   // Seed the editable day values from whatever's already saved for this
@@ -292,6 +301,10 @@ export default function MisHorasPage() {
       {!projectId ? (
         <div className="bg-white rounded-lg border border-gray-200 p-10 text-center text-gray-400 text-sm">
           Elegí un proyecto para empezar a cargar horas.
+        </div>
+      ) : (mode === 'tm' ? tmEntriesError : entriesError) ? (
+        <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-lg p-4 text-sm">
+          {(mode === 'tm' ? tmEntriesError : entriesError)?.message}
         </div>
       ) : mode === 'tm' ? (
         <>

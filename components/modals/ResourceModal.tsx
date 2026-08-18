@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -10,6 +10,7 @@ import { COUNTRIES } from '@/lib/countries'
 
 const schema = z.object({
   name: z.string().min(1),
+  email: z.string().email('Email inválido').optional().or(z.literal('')),
   country: z.string().min(1),
   color: z.string().min(1),
   capacityH: z.coerce.number().min(1).max(24),
@@ -25,7 +26,8 @@ interface Props {
 
 export default function ResourceModal({ open, onClose, editResource }: Props) {
   const qc = useQueryClient()
-  const { register, handleSubmit, reset, watch, formState: { isSubmitting } } = useForm<FormData>({
+  const [error, setError] = useState('')
+  const { register, handleSubmit, reset, watch, formState: { isSubmitting, errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: { color: '#4472C4', capacityH: 8, country: 'Argentina' },
   })
@@ -36,6 +38,7 @@ export default function ResourceModal({ open, onClose, editResource }: Props) {
     if (editResource) {
       reset({
         name: editResource.name,
+        email: editResource.email ?? '',
         country: editResource.country,
         color: editResource.color,
         capacityH: editResource.capacityH,
@@ -47,6 +50,7 @@ export default function ResourceModal({ open, onClose, editResource }: Props) {
   }, [editResource, open])
 
   const onSubmit = async (data: FormData) => {
+    setError('')
     const url = editResource ? `/api/resources/${editResource.id}` : '/api/resources'
     const method = editResource ? 'PUT' : 'POST'
     const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
@@ -56,6 +60,9 @@ export default function ResourceModal({ open, onClose, editResource }: Props) {
       qc.invalidateQueries({ queryKey: ['gantt'] })
       qc.invalidateQueries({ queryKey: ['holidays'] })
       onClose()
+    } else {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error ?? 'No se pudo guardar el recurso.')
     }
   }
 
@@ -91,6 +98,20 @@ export default function ResourceModal({ open, onClose, editResource }: Props) {
           </div>
 
           <div>
+            <label className="block text-sm font-medium mb-1">Email</label>
+            <input
+              type="email"
+              {...register('email')}
+              placeholder="Para carga de horas self-service (opcional)"
+              className="w-full border rounded px-3 py-2 text-sm"
+            />
+            {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email.message}</p>}
+            <p className="text-xs text-gray-400 mt-1">
+              Si coincide con el email de un usuario, esa persona podrá cargar sus propias horas.
+            </p>
+          </div>
+
+          <div>
             <label className="block text-sm font-medium mb-1">País *</label>
             <select {...register('country')} className="w-full border rounded px-3 py-2 text-sm">
               {COUNTRIES.map((c) => (
@@ -121,6 +142,7 @@ export default function ResourceModal({ open, onClose, editResource }: Props) {
             </button>
           )}
 
+          {error && <p className="text-red-500 text-sm">{error}</p>}
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 border rounded text-sm hover:bg-gray-50">Cancelar</button>
             <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-[#4472C4] text-white rounded text-sm hover:bg-[#2E75B6] disabled:opacity-50">
