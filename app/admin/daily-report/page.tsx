@@ -3,6 +3,7 @@
 import { useState, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
+import { useIsMobile } from '@/lib/use-is-mobile'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,9 +30,18 @@ function isWeekend(dayKey: string) {
   return dow === 0 || dow === 6
 }
 
+function isoDay(d: Date) {
+  return d.toISOString().substring(0, 10)
+}
+
+function isToday(dayKey: string) {
+  return dayKey === isoDay(new Date())
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function DailyReportPage() {
+  const isMobile = useIsMobile()
   const today = new Date()
   const y = today.getFullYear()
   const m = String(today.getMonth() + 1).padStart(2, '0')
@@ -69,12 +79,12 @@ export default function DailyReportPage() {
   const pivotResources  = pivotData?.resources ?? []
   const grandTotal      = pivotResources.reduce((s, r) => s + r.total, 0)
 
-  const CELL_W  = 34
-  const NAME_W  = 220
-  const TOTAL_W = 60
+  const CELL_W  = isMobile ? 30 : 34
+  const NAME_W  = isMobile ? 140 : 220
+  const TOTAL_W = isMobile ? 48 : 60
 
   const cellStyle = (day: string, base?: string): React.CSSProperties => ({
-    backgroundColor: isWeekend(day) ? '#E5E7EB' : (base ?? 'white'),
+    backgroundColor: isToday(day) ? '#fffbeb' : isWeekend(day) ? '#E5E7EB' : (base ?? 'white'),
     width: CELL_W, minWidth: CELL_W, maxWidth: CELL_W,
     textAlign: 'center', fontSize: 11, padding: 0,
     borderRight: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb',
@@ -134,16 +144,16 @@ export default function DailyReportPage() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-[#3a3a3a]">Reporte Diario</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-[#3a3a3a]">Reporte Diario</h1>
         <p className="text-sm text-gray-500 mt-1">
           Vista pivot de horas por recurso y proyecto agrupadas por día
         </p>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 flex flex-wrap gap-3 items-end">
+      <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 flex flex-wrap gap-3 items-end">
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500 font-medium">Persona</label>
           <select value={resourceId} onChange={(e) => setResourceId(e.target.value)}
@@ -181,7 +191,7 @@ export default function DailyReportPage() {
       </div>
 
       {/* Info bar */}
-      <div className="flex items-center justify-between text-sm text-gray-500">
+      <div className="flex items-center justify-between flex-wrap gap-2 text-sm text-gray-500">
         <span>{isFetching ? 'Cargando...' : `${pivotResources.length} personas · ${days.length} días`}</span>
         <div className="flex items-center gap-3">
           {grandTotal > 0 && <span className="font-semibold text-[#0170B9]">Total: {formatHours(grandTotal)} hs</span>}
@@ -213,7 +223,7 @@ export default function DailyReportPage() {
               </th>
               {days.map((day) => (
                 <th key={day} style={{
-                  backgroundColor: isWeekend(day) ? '#7a9cbf' : '#0170B9',
+                  backgroundColor: isToday(day) ? '#f59e0b' : isWeekend(day) ? '#7a9cbf' : '#0170B9',
                   color: 'white', width: CELL_W, minWidth: CELL_W,
                   textAlign: 'center', fontSize: 11, fontWeight: 'bold',
                   padding: '6px 0', borderRight: '1px solid #005a94',

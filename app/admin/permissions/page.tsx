@@ -84,7 +84,7 @@ export default function PermissionsPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6 text-gray-500 text-sm">Cargando permisos...</div>
+      <div className="p-4 sm:p-6 text-gray-500 text-sm">Cargando permisos...</div>
     )
   }
 
@@ -92,9 +92,9 @@ export default function PermissionsPage() {
   const roles = data?.roles ?? []
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold" style={{ color: '#3a3a3a' }}>
+        <h1 className="text-xl sm:text-2xl font-bold" style={{ color: '#3a3a3a' }}>
           Permisos de páginas
         </h1>
         <p className="text-sm text-gray-500 mt-1">
@@ -103,6 +103,7 @@ export default function PermissionsPage() {
       </div>
 
       <div className="bg-white rounded-xl shadow overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr style={HEADER_STYLE}>
@@ -155,6 +156,7 @@ export default function PermissionsPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

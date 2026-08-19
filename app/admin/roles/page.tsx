@@ -59,9 +59,9 @@ export default function RolesPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold" style={{ color: '#3a3a3a' }}>
+    <div className="p-4 sm:p-6">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold" style={{ color: '#3a3a3a' }}>
           Roles
         </h1>
       </div>
@@ -91,6 +91,7 @@ export default function RolesPage() {
 
       {/* Roles table */}
       <div className="bg-white rounded-xl shadow overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr style={HEADER_STYLE}>
@@ -142,6 +143,7 @@ export default function RolesPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

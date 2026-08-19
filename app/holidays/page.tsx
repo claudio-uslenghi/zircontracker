@@ -89,12 +89,12 @@ export default function HolidaysPage() {
   }, {})
 
   return (
-    <div className="p-6 space-y-8">
-      <h1 className="text-2xl font-bold text-gray-800">Vacaciones & Feriados</h1>
+    <div className="p-4 sm:p-6 space-y-6 sm:space-y-8">
+      <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Vacaciones & Feriados</h1>
 
       {/* ── VACATIONS ──────────────────────────────────────────────────────── */}
       <section>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Vacaciones programadas</h2>
           <button
             onClick={() => setShowVacationModal(true)}
@@ -105,7 +105,7 @@ export default function HolidaysPage() {
             <Plus size={14} /> Agregar vacación
           </button>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-[#0170B9] text-white">
@@ -150,9 +150,9 @@ export default function HolidaysPage() {
 
       {/* ── HOLIDAYS BY COUNTRY ─────────────────────────────────────────────── */}
       <section>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h2 className="text-lg font-semibold text-gray-700">Feriados por País</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {/* Country filter */}
             <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-sm">
               <Filter size={13} className="text-gray-400" />
@@ -194,7 +194,7 @@ export default function HolidaysPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
           {filtered.length === 0 ? (
             <div className="text-center py-10 text-gray-400">
               <p className="text-sm">Sin feriados registrados{filterCountry ? ` para ${filterCountry}` : ''}</p>
