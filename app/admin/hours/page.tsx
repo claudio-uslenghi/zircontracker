@@ -194,7 +194,7 @@ function ImportResultBlock({ result, label }: { result: ImportTimeEntriesResult;
       <div className="flex items-center gap-2 text-green-700 font-semibold text-sm">
         <CheckCircle2 size={16} /> {label} completada
       </div>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {[
           { label: 'Insertados', value: result.inserted, color: 'text-green-600' },
           { label: 'Actualizados', value: result.updated, color: 'text-blue-600' },
@@ -291,7 +291,7 @@ function ClockifyImport() {
             <FileText size={16} className="text-purple-500" />
             <span className="font-medium">{fileName}</span>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {[
               { label: 'Entradas agrupadas', value: parsed.length.toLocaleString() },
               { label: 'Personas únicas', value: uniqueResources },
@@ -438,7 +438,7 @@ function SccExcelImport() {
             <span className="font-medium">{fileName}</span>
             <span className="text-gray-400">• Recurso: <strong>{parsed.resourceName}</strong></span>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {[
               { label: 'Total entradas', value: parsed.entries.length.toLocaleString() },
               { label: 'Regulares', value: regularCount.toLocaleString() },
@@ -580,7 +580,7 @@ function LegacyCsvImport() {
             <FileText size={18} className="text-[#0170B9]" />
             <span>{fileName}</span>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {[
               { label: 'Entradas detectadas', value: parsed.length.toLocaleString() },
               { label: 'Personas únicas', value: uniqueResources },
@@ -1240,7 +1240,7 @@ function TabResumen() {
 function SummaryTable({ data, label }: { data: { label: string; color: string; hours: number }[]; label: string }) {
   const total = data.reduce((sum, d) => sum + d.hours, 0)
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+    <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-[#0170B9] text-white">
           <tr>
@@ -1400,21 +1400,21 @@ export default function HoursPage() {
   const [activeTab, setActiveTab] = useState<Tab>('import')
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-[#3a3a3a]">Reporte de Horas</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-[#3a3a3a]">Reporte de Horas</h1>
         <p className="text-sm text-gray-500 mt-1">
           Importación y consulta de horas trabajadas por persona y proyecto
         </p>
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200 flex gap-1">
+      <div className="border-b border-gray-200 flex gap-1 overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-3 sm:px-5 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
               activeTab === t.key
                 ? 'border-[#0170B9] text-[#0170B9]'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'

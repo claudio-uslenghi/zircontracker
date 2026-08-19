@@ -141,3 +141,113 @@ Migración (`scripts/add-task-and-email.ts`): agrega columna `email` a `Resource
 
 - Campos de `Task` más allá de `name` y `active` (¿estimatedHours? ¿fechas?) — se propone mínimo viable, ampliable después.
 - Alcance exacto de páginas vedadas al colaborador (`/gantt`, `/resources`, `/admin/*`, `/admin/control-horas`) se resuelve por el modelo default-deny de `PagePermission` ya existente — no requiere cambios de modelo, solo no otorgarle esos permisos al rol.
+
+---
+
+# Spec: Rediseño "Mis Horas" estilo Clockify + Mobile en toda la app
+
+## Objective
+
+El modo detallado de `/mis-horas` obliga hoy a elegir **un** proyecto arriba de la grilla antes de poder cargar nada, y agregar filas es un flujo de dos pasos separado de la tabla. El usuario adjuntó una captura de Clockify: ahí cada **fila** de la matriz es un proyecto+tarea elegido de forma independiente ("Internal Issues: Presales", "MOB Mantenimiento: Requerimientos Nicolas"), con una fila especial "+ Seleccionar proyecto" al pie para agregar más, y un botón `✕` a la derecha de cada fila para eliminarla.
+
+Este spec tiene dos partes:
+1. Rediseña el modo detallado de `/mis-horas` para igualar ese flujo de Clockify.
+2. Adapta a mobile **todas las páginas de la app excepto Gantt y Control de Horas** — esas dos se excluyen a propósito porque son tablas/vistas anchas por naturaleza (grilla de fechas de meses/años, matriz de presupuesto por proyecto) donde forzar mobile degradaría la herramienta sin aportar valor real; se usan casi siempre desde escritorio.
+
+**Éxito** = un colaborador puede, sin salir de la grilla semanal de `/mis-horas`: agregar una fila eligiendo proyecto y tarea, cargar horas de varios proyectos distintos en la misma semana, eliminar una fila (con confirmación si tiene horas cargadas) — y además, cualquier página de la app (salvo Gantt y Control de Horas) es usable desde un celular: se navega, se lee y se puede operar sin scroll horizontal de página completa ni elementos cortados. El modo Time & Material y el resto de la lógica de negocio no cambian.
+
+## Hallazgos clave
+
+- **No hace falta tocar el backend.** `GET /api/me/time-entries` sin `projectId` ya devuelve las entradas de toda la semana en cualquier proyecto; `GET /api/tasks` sin `projectId` ya devuelve todas las tareas. `Task.id` es un ID global (no reutilizado entre proyectos), así que las filas se pueden seguir indexando por `taskId` solo, sin necesitar una clave compuesta con `projectId`.
+- No existe un endpoint de borrado masivo — `DELETE /api/me/time-entries?id=` borra una sola entrada. Para "eliminar fila" alcanza con disparar un `DELETE` por cada entrada de esa tarea en la semana visible (como mucho 7 llamadas), sin agregar endpoints nuevos.
+- Las dimensiones de columna hoy son un objeto `style` fijo en píxeles (`NAME_W`, `CELL_W`), no clases de Tailwind — para achicarlas en mobile hace falta un breakpoint leído en JS (`window.matchMedia` / hook de resize), no alcanza con clases responsive directas sobre esos estilos inline.
+- **El sidebar (`components/layout/Sidebar.tsx`) es fijo y ocupa 208px (o 64px colapsado) en TODAS las pantallas**, incluidas Gantt y Control de Horas. En un viewport de 375px eso deja ~165px para el contenido — ninguna página individual queda usable en mobile si esto no se resuelve primero. Es un cambio de shell, no de una página puntual, y beneficia a todas las páginas en alcance (incluida su versión mobile del propio Gantt/Control de Horas si el usuario los abre desde el celular, aunque esas dos no se rediseñen puertas adentro).
+- Inventario de páginas de la app (`app/**/page.tsx`):
+
+  | Página | En alcance mobile |
+  |---|---|
+  | `/mis-horas` | Sí — ya cubierta arriba (rediseño Clockify + mobile) |
+  | `/mi-reporte` | Sí |
+  | `/projects` | Sí |
+  | `/resources` | Sí |
+  | `/holidays` | Sí |
+  | `/perfil` | Sí (ya es simple, ajustes menores) |
+  | `/login` | Sí (ya es simple, ajustes menores) |
+  | `/unauthorized` | Sí (ya es simple, ajustes menores) |
+  | `/admin/users` | Sí |
+  | `/admin/roles` | Sí |
+  | `/admin/permissions` | Sí |
+  | `/admin/daily-report` | Sí |
+  | `/admin/hours` | Sí (tabs de import + tabla/resumen/gráficos) |
+  | `/gantt` | **No** — excluida a pedido |
+  | `/admin/control-horas` | **No** — excluida a pedido |
+
+## Decisiones confirmadas
+
+1. **Selector de proyecto único → picker por fila (`/mis-horas`).** Se saca el `<select>` de proyecto de arriba de la grilla. La fila "+ Seleccionar proyecto" al pie abre un picker de dos pasos (Proyecto → Tarea, reutilizando `<select>` simples como en el resto del repo) y agrega la fila a la grilla.
+2. **Eliminar fila con horas cargadas**: pide confirmación (`confirm()`, mismo patrón que ya usa el resto de la app) y borra las entradas de esa fila para la semana visible. Sin horas, se quita directo sin confirmar.
+3. **Modo Time & Material**: no se toca. Sigue en su pestaña separada, sin cambios de UI ni de comportamiento.
+4. **Alcance de mobile: toda la app salvo Gantt y Control de Horas** (tabla de arriba). Esas dos quedan como están, en desktop, sin ningún ajuste.
+5. **Sidebar → shell responsive.** Bajo un breakpoint (`< 768px`, mismo criterio que usa `resize_window` mobile del navegador de pruebas), el sidebar deja de ocupar espacio fijo: se colapsa a un drawer off-canvas que se abre con un botón hamburguesa en una barra superior nueva, y se cierra al elegir una página o tocar afuera. Arriba del breakpoint, el sidebar actual (expandible/colapsable) no cambia.
+6. **Tratamiento por tipo de página** (aplicado a cada página en alcance):
+   - **Tablas tipo pivot** (`/mi-reporte`, `/admin/daily-report`, la parte de feriados/vacaciones de `/holidays`): mismo patrón que ya se define para `/mis-horas` — scroll horizontal, primera columna `sticky`, columnas más angostas y texto ≥16px en inputs bajo el breakpoint mobile.
+   - **Tablas de listado con acciones** (`/projects`, `/resources`, `/admin/users`, `/admin/roles`, `/admin/permissions`): scroll horizontal con la columna de nombre fija; si una tabla es angosta de por sí (pocas columnas, ej. `/admin/roles`), alcanza con que el contenedor no desborde el body.
+   - **Pantallas de formulario/tabs** (`/admin/hours`): los tabs (Importar/Tabla/Resumen/Gráficos) y los controles de import (Clockify/CSV/SCC) pasan a apilarse verticalmente bajo el breakpoint en vez de quedar en fila.
+   - **Pantallas simples** (`/perfil`, `/login`, `/unauthorized`): ya son angostas por diseño (`max-w-md` o similar) — solo se verifica que no haya overflow ni texto cortado.
+
+## Tech Stack
+
+Sin cambios — ver spec anterior. No se agregan librerías ni endpoints.
+
+## Project Structure
+
+Archivos que se tocan (todos ya existentes, ninguno nuevo):
+```
+components/layout/Sidebar.tsx      → drawer off-canvas + botón hamburguesa bajo el breakpoint
+components/layout/AuthLayout.tsx   → barra superior mobile con el toggle del drawer
+app/mis-horas/page.tsx             → reescritura del modo detallado (picker por fila) + mobile; modo T&M intacto
+app/mi-reporte/page.tsx            → mobile
+app/projects/page.tsx              → mobile
+app/resources/page.tsx             → mobile
+app/holidays/page.tsx              → mobile
+app/perfil/page.tsx                → mobile (ajustes menores)
+app/login/page.tsx                 → mobile (ajustes menores)
+app/unauthorized/page.tsx          → mobile (ajustes menores)
+app/admin/users/page.tsx           → mobile
+app/admin/roles/page.tsx           → mobile
+app/admin/permissions/page.tsx     → mobile
+app/admin/daily-report/page.tsx    → mobile
+app/admin/hours/page.tsx           → mobile
+```
+Explícitamente **no** se tocan: `app/gantt/page.tsx`, `app/admin/control-horas/page.tsx`.
+
+## Code Style
+
+Mismo patrón que ya usa cada archivo: componente cliente + TanStack Query, `<select>` planos para pickers (no autocomplete/combobox nuevo), estilos inline `style={{}}` para las celdas de tablas pivot (igual que `admin/daily-report`) + clases Tailwind para el resto. El hook de "es mobile" se resuelve una sola vez, compartido, con `useEffect` + `window.matchMedia('(max-width: 767px)')` (mismo corte que usa `resize_window` del navegador de pruebas), sin librerías nuevas — se puede extraer a `lib/use-is-mobile.ts` para no repetirlo en cada página.
+
+## Testing Strategy
+
+Igual que el resto del proyecto: sin suite automatizada, `npx tsc --noEmit` + QA manual en navegador. Para esta feature en particular, verificar manualmente:
+- Cargar horas en 2 proyectos distintos la misma semana sin recargar la página.
+- Eliminar una fila con horas → aparece confirmación → se borran las entradas de esa fila (verificar contra la DB o recargando la grilla).
+- Eliminar una fila sin horas → se quita sin confirmación.
+- `resize_window` a `mobile` (375×812) en **cada página en alcance** (ver tabla de arriba): el sidebar se colapsa a drawer con hamburguesa, ninguna página tiene scroll horizontal de body completo (solo scroll horizontal dentro del contenedor de tabla cuando corresponde), no hay texto cortado ni botones inalcanzables.
+- `resize_window` a `mobile` en `/gantt` y `/admin/control-horas`: confirmar que siguen exactamente igual que antes (sin cambios), aparte de heredar el drawer del sidebar.
+
+## Boundaries
+
+- **Always**: mantener el estilo visual ya establecido (paleta `#0170B9`/`#005a94`/`#1e3a5f`, sticky headers, mismo lenguaje que `admin/daily-report`); resolver siempre `resourceId` server-side (sin cambios acá, ya está resuelto).
+- **Ask first**: nada nuevo — no hay cambios de datos ni de permisos en este spec.
+- **Never**: tocar el modo T&M, los endpoints de `/api/me/time-entries` o `/api/tasks`, el contenido/lógica de `/gantt` o `/admin/control-horas` (solo heredan el drawer del shell, nada más).
+
+## Success Criteria
+
+1. `/mis-horas` (modo detallado) ya no tiene selector de proyecto arriba de la grilla.
+2. La fila "+ Seleccionar proyecto" al pie de la tabla permite elegir proyecto y tarea, y agrega una fila nueva rotulada "Proyecto: Tarea".
+3. Se puede cargar horas en filas de 2 proyectos distintos la misma semana, ambas visibles en la misma grilla.
+4. El botón `✕` de una fila con horas pide confirmación antes de borrar; una fila sin horas se quita directo.
+5. El modo Time & Material sigue funcionando exactamente igual que antes.
+6. En viewport mobile (375px), el sidebar se colapsa a un drawer con botón hamburguesa, en todas las páginas.
+7. En viewport mobile, cada página de la tabla de alcance (todas menos `/gantt` y `/admin/control-horas`) es usable: sin scroll horizontal de body completo, sin texto cortado, sin botones inalcanzables.
+8. `/gantt` y `/admin/control-horas` quedan sin cambios de contenido — solo heredan el drawer del sidebar.
+9. `npx tsc --noEmit` y `npm run build` pasan sin errores.

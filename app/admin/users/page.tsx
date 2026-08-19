@@ -85,8 +85,8 @@ function UserModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
           {isEdit ? 'Editar usuario' : 'Nuevo usuario'}
         </h2>
@@ -233,9 +233,9 @@ export default function UsersPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold" style={{ color: '#3a3a3a' }}>
+    <div className="p-4 sm:p-6">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold" style={{ color: '#3a3a3a' }}>
           Usuarios
         </h1>
         <button
@@ -249,6 +249,7 @@ export default function UsersPage() {
       </div>
 
       <div className="bg-white rounded-xl shadow overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr style={HEADER_STYLE}>
@@ -328,6 +329,7 @@ export default function UsersPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {modal.open && (

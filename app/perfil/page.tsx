@@ -48,8 +48,8 @@ export default function PerfilPage() {
   }
 
   return (
-    <div className="p-6 max-w-md">
-      <h1 className="text-2xl font-bold text-[#3a3a3a]">Mi Perfil</h1>
+    <div className="p-4 sm:p-6 max-w-md">
+      <h1 className="text-xl sm:text-2xl font-bold text-[#3a3a3a]">Mi Perfil</h1>
       <p className="text-sm text-gray-500 mt-1 mb-6">{session?.user?.name ?? session?.user?.email}</p>
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">

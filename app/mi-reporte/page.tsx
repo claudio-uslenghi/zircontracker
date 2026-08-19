@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useIsMobile } from '@/lib/use-is-mobile'
 import type { Project } from '@/types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -25,6 +26,14 @@ function isWeekend(dayKey: string) {
   return dow === 0 || dow === 6
 }
 
+function isoDay(d: Date) {
+  return d.toISOString().substring(0, 10)
+}
+
+function isToday(dayKey: string) {
+  return dayKey === isoDay(new Date())
+}
+
 // /api/me/* returns a JSON error body on 403/404 — surface it as a query
 // error with a clear message instead of silently showing an empty report.
 async function fetchMeJson(url: string) {
@@ -37,6 +46,7 @@ async function fetchMeJson(url: string) {
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function MiReportePage() {
+  const isMobile = useIsMobile()
   const today = new Date()
   const y = today.getFullYear()
   const m = String(today.getMonth() + 1).padStart(2, '0')
@@ -69,12 +79,12 @@ export default function MiReportePage() {
   const projectRows = pivotData?.resources?.[0]?.projects ?? []
   const grandTotal = projectRows.reduce((s, p) => s + p.total, 0)
 
-  const CELL_W = 34
-  const NAME_W = 220
-  const TOTAL_W = 60
+  const CELL_W = isMobile ? 30 : 34
+  const NAME_W = isMobile ? 140 : 220
+  const TOTAL_W = isMobile ? 48 : 60
 
   const cellStyle = (day: string): React.CSSProperties => ({
-    backgroundColor: isWeekend(day) ? '#E5E7EB' : 'white',
+    backgroundColor: isToday(day) ? '#fffbeb' : isWeekend(day) ? '#E5E7EB' : 'white',
     width: CELL_W, minWidth: CELL_W, maxWidth: CELL_W,
     textAlign: 'center', fontSize: 11, padding: '1px 0',
     borderRight: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb',
@@ -87,14 +97,14 @@ export default function MiReportePage() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-[#3a3a3a]">Mi Reporte</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-[#3a3a3a]">Mi Reporte</h1>
         <p className="text-sm text-gray-500 mt-1">Tus propias horas por proyecto, agrupadas por día</p>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 flex flex-wrap gap-3 items-end">
+      <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 flex flex-wrap gap-3 items-end">
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500 font-medium">Proyecto</label>
           <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
@@ -149,7 +159,7 @@ export default function MiReportePage() {
               </th>
               {days.map((day) => (
                 <th key={day} style={{
-                  backgroundColor: isWeekend(day) ? '#7a9cbf' : '#0170B9',
+                  backgroundColor: isToday(day) ? '#f59e0b' : isWeekend(day) ? '#7a9cbf' : '#0170B9',
                   color: 'white', width: CELL_W, minWidth: CELL_W,
                   textAlign: 'center', fontSize: 11, fontWeight: 'bold',
                   padding: '6px 0', borderRight: '1px solid #005a94',
