@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useMemo, useState, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { parse as dateParse } from 'date-fns'
 import { enUS } from 'date-fns/locale'
@@ -12,6 +12,7 @@ import {
   Upload, AlertTriangle, CheckCircle2, FileText, Pencil, Trash2, Check, X,
   ChevronDown, Plus, ArrowUp, ArrowDown, ArrowUpDown,
 } from 'lucide-react'
+import SearchableSelect from '@/components/ui/SearchableSelect'
 import type {
   ParsedTimeEntry, ImportTimeEntriesResult,
   TimeEntryByResource, TimeEntryByProject, TimeEntryByMonth,
@@ -334,6 +335,11 @@ function SccExcelImport() {
     queryKey: ['projects'],
     queryFn: () => fetch('/api/projects').then((r) => r.json()),
   })
+  const projectNameOptions = useMemo(
+    () => (projects ?? []).map((p: { id: number; name: string }) => ({ value: p.name, label: p.name }))
+      .sort((a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label)),
+    [projects]
+  )
 
   const handleFile = useCallback(async (file: File) => {
     setFileName(file.name); setResult(null); setError(''); setParsed(null)
@@ -397,16 +403,13 @@ function SccExcelImport() {
         </div>
         <div className="flex flex-col gap-1 flex-1 min-w-48">
           <label className="text-xs text-gray-500 font-medium">Proyecto</label>
-          <select
+          <SearchableSelect
             value={projectName}
-            onChange={(e) => { setProjectName(e.target.value); setParsed(null) }}
+            onChange={(v) => { setProjectName(v); setParsed(null) }}
+            options={projectNameOptions}
+            placeholder="Seleccioná un proyecto..."
             className="border border-gray-300 rounded px-2 py-1.5 text-sm"
-          >
-            <option value="">Seleccioná un proyecto...</option>
-            {(projects ?? []).map((p: { id: number; name: string }) => (
-              <option key={p.id} value={p.name}>{p.name}</option>
-            ))}
-          </select>
+          />
         </div>
       </div>
 
@@ -775,6 +778,12 @@ function TabTabla() {
   const { data: resources } = useQuery({ queryKey: ['resources'], queryFn: () => fetch('/api/resources').then((r) => r.json()) })
   const { data: projects }  = useQuery({ queryKey: ['projects'],  queryFn: () => fetch('/api/projects').then((r) => r.json()) })
 
+  const projectOptions = useMemo(
+    () => (projects ?? []).map((p: { id: number; name: string }) => ({ value: String(p.id), label: p.name }))
+      .sort((a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label)),
+    [projects]
+  )
+
   const rawKey = ['time-entries', 'raw', resourceId, projectId, dateFrom, dateTo, month, page, sortBy, sortDir]
   const params = new URLSearchParams({
     view: 'raw', page: String(page), pageSize: '100',
@@ -905,13 +914,13 @@ function TabTabla() {
             <option key={r.id} value={r.id}>{r.name}</option>
           ))}
         </select>
-        <select value={projectId} onChange={(e) => { setProjectId(e.target.value); setPage(1) }}
-          className="border border-gray-300 rounded px-2 py-1.5 text-sm">
-          <option value="">Todos los proyectos</option>
-          {(projects ?? []).map((p: { id: number; name: string }) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
+        <SearchableSelect
+          value={projectId}
+          onChange={(v) => { setProjectId(v); setPage(1) }}
+          options={projectOptions}
+          placeholder="Todos los proyectos"
+          className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+        />
         <input type="month" value={month}
           onChange={(e) => { setMonth(e.target.value); setDateFrom(''); setDateTo(''); setPage(1) }}
           className="border border-gray-300 rounded px-2 py-1.5 text-sm" />
@@ -978,14 +987,13 @@ function TabTabla() {
                     </select>
                   </td>
                   <td className="px-2 py-1.5">
-                    <select value={newForm.projectId}
-                      onChange={(e) => setNewForm((f) => ({ ...f, projectId: e.target.value }))}
-                      className="border rounded px-2 py-1 text-xs w-full">
-                      <option value="">Proyecto...</option>
-                      {(projects ?? []).map((p: { id: number; name: string }) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
+                    <SearchableSelect
+                      value={newForm.projectId}
+                      onChange={(v) => setNewForm((f) => ({ ...f, projectId: v }))}
+                      options={projectOptions}
+                      placeholder="Proyecto..."
+                      className="border rounded px-2 py-1 text-xs w-full"
+                    />
                   </td>
                   <td className="px-2 py-1.5">
                     <input type="date" value={newForm.date}
@@ -1026,13 +1034,12 @@ function TabTabla() {
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <select value={editForm.projectId}
-                        onChange={(ev) => setEditForm((f) => ({ ...f, projectId: ev.target.value }))}
-                        className="border rounded px-2 py-1 text-xs w-full">
-                        {(projects ?? []).map((p: { id: number; name: string }) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
+                      <SearchableSelect
+                        value={editForm.projectId}
+                        onChange={(v) => setEditForm((f) => ({ ...f, projectId: v }))}
+                        options={projectOptions}
+                        className="border rounded px-2 py-1 text-xs w-full"
+                      />
                     </td>
                     <td className="px-2 py-1.5">
                       <input type="date" value={editForm.date}

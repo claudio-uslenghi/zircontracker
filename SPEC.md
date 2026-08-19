@@ -251,3 +251,74 @@ Igual que el resto del proyecto: sin suite automatizada, `npx tsc --noEmit` + QA
 7. En viewport mobile, cada página de la tabla de alcance (todas menos `/gantt` y `/admin/control-horas`) es usable: sin scroll horizontal de body completo, sin texto cortado, sin botones inalcanzables.
 8. `/gantt` y `/admin/control-horas` quedan sin cambios de contenido — solo heredan el drawer del sidebar.
 9. `npx tsc --noEmit` y `npm run build` pasan sin errores.
+
+---
+
+# Spec: Combos de proyecto y persona ordenados + buscables
+
+## Objective
+
+Los `<select>` de proyecto en la app salen en un orden que no tiene sentido para el usuario (por fecha de inicio, no alfabético), y son selects nativos sin forma de escribir para filtrar — con 30+ proyectos hay que scrollear la lista entera para encontrar uno. Este spec ordena alfabéticamente y agrega búsqueda por texto a todos los combos de proyecto de la app (excepto Gantt, que queda afuera a pedido explícito), y agrega búsqueda al combo de "Persona" del Reporte Diario (ese ya viene ordenado alfabéticamente desde el backend).
+
+**Éxito** = en cada combo en alcance, las opciones aparecen ordenadas A-Z, y escribir en el campo filtra la lista en tiempo real por coincidencia de texto (sin distinguir mayúsculas/minúsculas), con navegación por teclado (flechas + Enter + Escape) igual que un combobox estándar.
+
+## Hallazgos clave
+
+- **La causa raíz del desorden es una sola línea**: `GET /api/projects` usa `orderBy: { startDate: 'asc' }` en vez de `{ name: 'asc' }`. Cambiar esto ahí ordena automáticamente casi todos los combos de proyecto de la app, porque todos comparten ese mismo endpoint vía `useQuery(['projects'], ...)`.
+- `GET /api/resources` ya ordena por `{ name: 'asc' }` — el combo de "Persona" del Reporte Diario ya está alfabético, solo le falta la búsqueda por texto.
+- **Gantt y Control de Horas quedan afuera** (confirmado con el usuario): sus filtros de proyecto no son `<select>` sino widgets propios de multi-selección por checkboxes, alimentados por endpoints separados (`/api/gantt`, `/api/control-horas`), y ya habían quedado explícitamente excluidos de la tanda de cambios anterior.
+- Inventario de combos de proyecto en alcance (todos `<select>` nativos hoy):
+
+  | Archivo | Combo(s) |
+  |---|---|
+  | `app/mis-horas/page.tsx` | Proyecto (modo T&M) + Proyecto (picker de fila, modo detallado) |
+  | `app/mi-reporte/page.tsx` | Proyecto (filtro) |
+  | `app/admin/daily-report/page.tsx` | Proyecto (filtro) + **Persona (filtro)** |
+  | `app/admin/hours/page.tsx` | Proyecto (import SCC), Proyecto (filtro tabla), Proyecto (alta inline), Proyecto (edición inline) |
+
+  9 combos en total (8 de proyecto + 1 de persona) en 4 archivos.
+- Un `<select>` nativo del navegador no soporta escribir-para-filtrar — hace falta reemplazarlo por un combobox propio (input de texto + lista desplegable filtrada), no hay forma de lograrlo con el elemento nativo.
+
+## Decisiones
+
+1. **Fix de orden**: `app/api/projects/route.ts` — `orderBy: { startDate: 'asc' }` → `orderBy: { name: 'asc' }`. Un solo cambio, beneficia a todos los consumidores del endpoint.
+2. **Componente nuevo y reutilizable**: `components/ui/SearchableSelect.tsx` — combobox con input de texto + panel desplegable, mismo estilo visual (borde, radio, tamaño de fuente) que los `<select>` que reemplaza. Filtra por coincidencia de substring, sin distinguir mayúsculas/minúsculas. Soporta teclado (↑/↓ para navegar, Enter para elegir, Escape para cerrar sin cambiar) y cierre al hacer click afuera.
+3. **Alcance confirmado**: los 9 combos de la tabla de arriba. Gantt (incluido el modal "Nueva Asignación") y Control de Horas quedan completamente afuera.
+
+## Tech Stack
+
+Sin cambios, sin librerías nuevas — se construye con React + Tailwind, mismo patrón que el resto de los componentes de la app.
+
+## Project Structure
+
+```
+components/ui/SearchableSelect.tsx   → nuevo, componente reutilizable
+app/api/projects/route.ts            → orderBy: name asc (1 línea)
+app/mis-horas/page.tsx               → 2 combos reemplazados
+app/mi-reporte/page.tsx              → 1 combo reemplazado
+app/admin/daily-report/page.tsx      → 2 combos reemplazados (proyecto + persona)
+app/admin/hours/page.tsx             → 4 combos reemplazados
+```
+
+## Code Style
+
+`SearchableSelect` recibe `options: { value: string; label: string }[]`, `value`, `onChange`, y un `placeholder` — misma forma que ya arman todos los call sites hoy a partir de `projects.map(...)`, así que el reemplazo en cada página es mecánico: se arma el array de `options` una vez (con el `.sort()` ya innecesario para proyecto gracias al fix del punto 1, pero se aplica igual por si el consumidor cachea datos viejos) y se pasa al componente en vez de escribir el `<option>` a mano.
+
+## Testing Strategy
+
+Sin suite automatizada — `npx tsc --noEmit` + QA manual: escribir un par de letras en cada combo y confirmar que filtra, confirmar que las listas aparecen A-Z, navegar con teclado, confirmar que Gantt y Control de Horas no se tocaron (`git diff`).
+
+## Boundaries
+
+- **Always**: mantener el valor seleccionado como string (mismo tipo que ya usan los `value`/`onChange` existentes) para no romper la lógica de cada página.
+- **Ask first**: nada nuevo.
+- **Never**: tocar `components/gantt/GanttControls.tsx`, `app/admin/control-horas/page.tsx`, `components/modals/AssignmentModal.tsx`, ni ningún otro combo de persona fuera del de `admin/daily-report`.
+
+## Success Criteria
+
+1. `GET /api/projects` devuelve los proyectos ordenados por nombre.
+2. Los 8 combos de proyecto listados arriba muestran las opciones A-Z y filtran al escribir.
+3. El combo de Persona de `admin/daily-report` filtra al escribir (el orden ya estaba bien).
+4. Navegación por teclado (↑/↓/Enter/Escape) funciona en el nuevo componente.
+5. `git diff` confirma cero cambios en Gantt, Control de Horas y `AssignmentModal.tsx`.
+6. `npx tsc --noEmit` y `npm run build` pasan sin errores.
