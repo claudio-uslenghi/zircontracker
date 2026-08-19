@@ -10,11 +10,13 @@ const ALWAYS_ALLOWED_AUTHENTICATED = ['/perfil']
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // Allow public paths and static assets
+  // Allow public paths and static assets — logo/favicon must be reachable
+  // from the unauthenticated login page too.
   if (
     PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
     pathname.startsWith('/_next') ||
-    pathname.startsWith('/favicon')
+    pathname.startsWith('/favicon') ||
+    /\.(jpg|jpeg|png|svg|gif|webp|ico)$/i.test(pathname)
   ) {
     return NextResponse.next()
   }
