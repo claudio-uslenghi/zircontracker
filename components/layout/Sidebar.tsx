@@ -67,16 +67,19 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="flex items-center justify-between px-4 py-4 border-b border-white/20">
         {!collapsed && (
-          <div className="flex flex-col">
-            <span className="font-bold text-sm leading-tight text-white tracking-wide">
-              Zircon Planner
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-md bg-white shrink-0 overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/icon.jpg" alt="ZirconTech" className="w-full h-full object-contain" />
+            </div>
+            <span className="font-bold text-base leading-tight text-white tracking-wide truncate">
+              ZirconTracker
             </span>
-            <span className="text-xs text-white/60 leading-tight">Zircon Tech</span>
           </div>
         )}
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="ml-auto text-white/70 hover:text-white transition-colors p-1 rounded hover:bg-white/10"
+          className="ml-auto text-white/70 hover:text-white transition-colors p-1 rounded hover:bg-white/10 shrink-0"
         >
           {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
         </button>

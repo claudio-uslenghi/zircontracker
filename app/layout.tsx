@@ -4,8 +4,8 @@ import Providers from '@/components/layout/Providers'
 import AuthLayout from '@/components/layout/AuthLayout'
 
 export const metadata: Metadata = {
-  title: 'Zircon Planner',
-  description: 'Planificación de proyectos y recursos — Zircon Tech',
+  title: 'ZirconTracker',
+  description: 'Carga de horas, vacaciones, proyectos y control de horas — ZirconTech',
   icons: {
     icon: '/icon.jpg',
     apple: '/icon.jpg',
