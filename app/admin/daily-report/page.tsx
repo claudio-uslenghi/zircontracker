@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, Fragment } from 'react'
+import { useMemo, useState, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
+import SearchableSelect from '@/components/ui/SearchableSelect'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,17 @@ export default function DailyReportPage() {
     queryKey: ['projects'],
     queryFn: () => fetch('/api/projects').then((r) => r.json()),
   })
+
+  const resourceOptions = useMemo(
+    () => (resources ?? []).map((r: { id: number; name: string }) => ({ value: String(r.id), label: r.name }))
+      .sort((a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label)),
+    [resources]
+  )
+  const projectOptions = useMemo(
+    () => (projects ?? []).map((p: { id: number; name: string }) => ({ value: String(p.id), label: p.name }))
+      .sort((a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label)),
+    [projects]
+  )
 
   const params = new URLSearchParams({
     view: 'pivot',
@@ -156,23 +168,23 @@ export default function DailyReportPage() {
       <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 flex flex-wrap gap-3 items-end">
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500 font-medium">Persona</label>
-          <select value={resourceId} onChange={(e) => setResourceId(e.target.value)}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[160px]">
-            <option value="">Todas las personas</option>
-            {(resources ?? []).map((r: { id: number; name: string }) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
+          <SearchableSelect
+            value={resourceId}
+            onChange={setResourceId}
+            options={resourceOptions}
+            placeholder="Todas las personas"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[160px]"
+          />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500 font-medium">Proyecto</label>
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[160px]">
-            <option value="">Todos los proyectos</option>
-            {(projects ?? []).map((p: { id: number; name: string }) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <SearchableSelect
+            value={projectId}
+            onChange={setProjectId}
+            options={projectOptions}
+            placeholder="Todos los proyectos"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[160px]"
+          />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500 font-medium">Desde</label>

@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useIsMobile } from '@/lib/use-is-mobile'
+import SearchableSelect from '@/components/ui/SearchableSelect'
 import type { Project } from '@/types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -60,6 +61,10 @@ export default function MiReportePage() {
     queryKey: ['projects'],
     queryFn: () => fetch('/api/projects').then((r) => r.json()),
   })
+  const projectOptions = useMemo(
+    () => (projects ?? []).map((p) => ({ value: String(p.id), label: p.name })).sort((a, b) => a.label.localeCompare(b.label)),
+    [projects]
+  )
 
   const params = new URLSearchParams({
     view: 'pivot',
@@ -107,13 +112,13 @@ export default function MiReportePage() {
       <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 flex flex-wrap gap-3 items-end">
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500 font-medium">Proyecto</label>
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[160px]">
-            <option value="">Todos los proyectos</option>
-            {(projects ?? []).map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <SearchableSelect
+            value={projectId}
+            onChange={setProjectId}
+            options={projectOptions}
+            placeholder="Todos los proyectos"
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[160px]"
+          />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs text-gray-500 font-medium">Desde</label>

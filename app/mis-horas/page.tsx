@@ -6,6 +6,7 @@ import { startOfWeek, addDays, addWeeks, format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Plus } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
+import SearchableSelect from '@/components/ui/SearchableSelect'
 import type { Task, TimeEntry, Project } from '@/types'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -92,6 +93,10 @@ export default function MisHorasPage() {
   })
 
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects])
+  const projectOptions = useMemo(
+    () => projects.map((p) => ({ value: String(p.id), label: p.name })).sort((a, b) => a.label.localeCompare(b.label)),
+    [projects]
+  )
   const taskById = useMemo(() => new Map(allTasks.map((t) => [t.id, t])), [allTasks])
 
   const grid = useMemo(() => {
@@ -419,16 +424,13 @@ export default function MisHorasPage() {
                         <span className="text-[11px] text-gray-500">Seleccionar proyecto</span>
                       </div>
                       <div className="flex flex-col gap-1">
-                        <select
+                        <SearchableSelect
                           value={pickerProjectId}
-                          onChange={(e) => { setPickerProjectId(e.target.value); setPickerTaskId('') }}
+                          onChange={(v) => { setPickerProjectId(v); setPickerTaskId('') }}
+                          options={projectOptions}
+                          placeholder="Proyecto..."
                           className="border border-gray-300 rounded px-1.5 py-1 text-xs w-full"
-                        >
-                          <option value="">Proyecto...</option>
-                          {projects.map((p) => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))}
-                        </select>
+                        />
                         <div className="flex gap-1">
                           <select
                             value={pickerTaskId}
@@ -505,16 +507,13 @@ export default function MisHorasPage() {
           <div className="bg-white rounded-lg border border-gray-200 p-4 flex flex-wrap gap-3 items-end">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500 font-medium">Proyecto</label>
-              <select
+              <SearchableSelect
                 value={tmProjectId}
-                onChange={(e) => setTmProjectId(e.target.value)}
+                onChange={setTmProjectId}
+                options={projectOptions}
+                placeholder="Seleccionar proyecto..."
                 className="border border-gray-300 rounded px-2 py-1.5 text-sm min-w-[200px]"
-              >
-                <option value="">Seleccionar proyecto...</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+              />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500 font-medium">Mes</label>

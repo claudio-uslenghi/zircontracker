@@ -4,7 +4,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
 export async function GET() {
-  const projects = await prisma.project.findMany({ orderBy: { startDate: 'asc' } })
+  const projects = await prisma.project.findMany()
+  // SQLite's default ORDER BY is byte/ASCII collation (all uppercase before
+  // any lowercase), which doesn't match human alphabetical order for mixed-
+  // case names — sort in JS with localeCompare instead.
+  projects.sort((a, b) => a.name.localeCompare(b.name))
   return NextResponse.json(projects)
 }
 
