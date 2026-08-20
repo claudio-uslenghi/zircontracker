@@ -65,7 +65,7 @@ export default function MiReportePage() {
     queryFn: () => fetch('/api/projects').then((r) => r.json()),
   })
   const projectOptions = useMemo(
-    () => (projects ?? []).map((p) => ({ value: String(p.id), label: p.name })).sort((a, b) => a.label.localeCompare(b.label)),
+    () => (projects ?? []).filter((p) => p.status !== 'Finalizado').map((p) => ({ value: String(p.id), label: p.name })).sort((a, b) => a.label.localeCompare(b.label)),
     [projects]
   )
 
