@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface SearchableSelectOption {
   value: string
@@ -13,6 +14,12 @@ interface Props {
   options: SearchableSelectOption[]
   placeholder?: string
   className?: string
+}
+
+interface Position {
+  top: number
+  left: number
+  width: number
 }
 
 // Drop-in replacement for a native <select> that adds type-to-filter, while
@@ -29,6 +36,7 @@ export default function SearchableSelect({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [highlightIndex, setHighlightIndex] = useState(0)
+  const [position, setPosition] = useState<Position | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const selectedOption = options.find((o) => o.value === value)
@@ -38,6 +46,36 @@ export default function SearchableSelect({
     if (!q) return options
     return options.filter((o) => o.label.toLowerCase().includes(q))
   }, [options, query])
+
+  // The dropdown renders through a portal (see below) instead of as a normal
+  // absolutely-positioned child, so it can never be clipped by an ancestor's
+  // `overflow: hidden/auto/scroll` (e.g. a scrollable table wrapper) — it's
+  // positioned in fixed viewport coordinates read off the input itself, and
+  // recalculated on scroll/resize while open.
+  function updatePosition() {
+    const el = inputRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    setPosition({ top: rect.bottom, left: rect.left, width: Math.max(rect.width, 180) })
+  }
+
+  useLayoutEffect(() => {
+    if (open) updatePosition()
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const handler = () => updatePosition()
+    // capture:true so this also fires for scroll on nested containers
+    // (e.g. the horizontally-scrollable table wrapper in Mis Horas), whose
+    // scroll events don't bubble to window in the normal bubbling phase.
+    window.addEventListener('scroll', handler, true)
+    window.addEventListener('resize', handler)
+    return () => {
+      window.removeEventListener('scroll', handler, true)
+      window.removeEventListener('resize', handler)
+    }
+  }, [open])
 
   function openList() {
     setOpen(true)
@@ -96,8 +134,17 @@ export default function SearchableSelect({
         autoComplete="off"
         className={className}
       />
-      {open && (
-        <div className="absolute z-30 mt-1 w-full min-w-[180px] max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+      {open && position && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: position.top,
+            left: position.left,
+            width: position.width,
+            zIndex: 9999,
+          }}
+          className="mt-1 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg"
+        >
           {filtered.length === 0 ? (
             <div className="px-3 py-2 text-sm text-gray-400">Sin resultados</div>
           ) : (
@@ -115,7 +162,8 @@ export default function SearchableSelect({
               </button>
             ))
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

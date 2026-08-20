@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfWeek, addDays, addWeeks, format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import type { Task, TimeEntry, Project } from '@/types'
@@ -336,12 +336,17 @@ export default function MisHorasPage() {
                     }}>
                       Total
                     </th>
+                    {/* Spacer matching the delete-button column in <tbody> —
+                        table-layout: fixed sizes columns off this header row,
+                        so without this cell that column renders outside the
+                        table's own computed width. */}
+                    <th style={{ backgroundColor: '#005a94', width: 28, minWidth: 28 }} />
                   </tr>
                 </thead>
                 <tbody>
                   {isFetching && rowTaskIds.length === 0 && (
                     <tr>
-                      <td colSpan={9} style={{ textAlign: 'center', padding: '24px', color: '#9ca3af' }}>
+                      <td colSpan={10} style={{ textAlign: 'center', padding: '24px', color: '#9ca3af' }}>
                         Cargando...
                       </td>
                     </tr>
@@ -400,10 +405,10 @@ export default function MisHorasPage() {
                         <td style={{ width: 28, minWidth: 28, textAlign: 'center', borderBottom: '1px solid #e5e7eb' }}>
                           <button
                             onClick={() => removeRow(taskId)}
-                            className="text-gray-300 hover:text-red-500"
+                            className="text-red-400 hover:text-red-600 transition-colors"
                             title="Eliminar fila"
                           >
-                            ✕
+                            <Trash2 size={14} />
                           </button>
                         </td>
                       </tr>

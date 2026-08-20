@@ -322,3 +322,88 @@ Sin suite automatizada — `npx tsc --noEmit` + QA manual: escribir un par de le
 4. Navegación por teclado (↑/↓/Enter/Escape) funciona en el nuevo componente.
 5. `git diff` confirma cero cambios en Gantt, Control de Horas y `AssignmentModal.tsx`.
 6. `npx tsc --noEmit` y `npm run build` pasan sin errores.
+
+---
+
+# Spec: Dashboard inicial, fix acceso colaborador, y UX de Mis Horas
+
+## Objective
+
+Cuatro correcciones relacionadas de experiencia de usuario y un bug de acceso:
+
+1. El mensaje "Acceso denegado" siempre ofrece "Ir al Gantt", aunque el rol del usuario no tenga acceso al Gantt (lo vuelve a mandar al mismo error).
+2. `cuslenghi@zircon.tech` (rol colaborador) "no puede loguearse".
+3. No existe una pagina de inicio neutral: hoy `/` redirige siempre a `/gantt`, y los roles sin acceso a esa pagina (como colaborador) quedan sin landing page valida.
+4. En Mis Horas: el combo de proyecto del selector de fila no se expande (se corta), el boton de borrar fila queda visualmente fuera de la tabla, y usa una "X" en vez del icono de tacho de basura rojo que se usa en el resto de la app.
+
+## Hallazgos clave de la exploracion
+
+- **Los puntos 1, 2 y 3 son el mismo bug.** Confirmado contra la base real: el usuario `cuslenghi@zircon.tech` existe, esta activo, tiene el `Resource` vinculado correctamente por email, y su rol `colaborador` tiene `allowedPages = ['/projects', '/holidays', '/mis-horas', '/mi-reporte']` — **no incluye `/gantt`**. El login (NextAuth `authorize()`) funciona bien y si genera sesion. Pero `app/page.tsx` hace `redirect('/gantt')` incondicionalmente, y el middleware (`middleware.ts`) rebota cualquier ruta fuera de `allowedPages` a `/unauthorized`. Resultado: el colaborador entra con usuario/contrasena correctos y aterriza directo en la pantalla de "Acceso denegado" — indistinguible, desde su perspectiva, de "no puedo loguearme". Y esa misma pantalla de error lo manda de vuelta a `/gantt`, un loop.
+- El unico mecanismo hoy para saltarse el matrix de `PagePermission` es la lista `ALWAYS_ALLOWED_AUTHENTICATED` en `middleware.ts` (hoy solo tiene `/perfil`).
+- No existe ninguna pagina de inicio/resumen hoy. Los datos para armar una (cantidad de usuarios, proyectos, feriados) ya estan disponibles via `prisma.user.count()`, `prisma.project.count()` (o el `GET /api/projects` existente) y `GET /api/country-holidays` (ya devuelve feriados ordenados por pais y fecha).
+- `Sidebar.tsx` filtra los items de nav por `allowedPages` para no-admins; el Dashboard debe listarse ahi para todos los roles sin depender de esa lista (mismo trato que `/perfil`, que ni siquiera esta en `NAV_ITEMS` — hay que agregar un item fijo, no condicionado).
+- **Causa raiz del combo que "no se expande" en Mis Horas**: el picker de proyecto de la fila "Seleccionar proyecto" (`app/mis-horas/page.tsx`) vive dentro de un `<div className="overflow-x-auto">` que envuelve la tabla. Por la especificacion CSS, declarar `overflow-x: auto` sin `overflow-y` fuerza a que `overflow-y` compute como `auto` tambien (no quede en `visible`) — asi que el `<div>` de dropdown absoluto de `SearchableSelect` (que se renderiza dentro de esa misma jerarquia) queda recortado por los bordes de ese contenedor scrolleable en vez de flotar libremente. Es un problema del componente `SearchableSelect` en si (cualquier ancestro con overflow no-visible lo recorta), no solo de esta pantalla.
+- **Causa raiz de "el boton de borrar fila queda afuera de la tabla" / cabecera mas corta**: la tabla usa `table-layout: fixed`. El `<thead>` tiene columnas para Proyectos + 7 dias + Total (9 columnas), pero cada `<tr>` del `<tbody>` tiene una decima celda extra de 28px para el boton de borrar que **no tiene equivalente en el `<thead>`**. Con `table-layout: fixed`, el ancho de las columnas lo define la primera fila (`<thead>`), asi que esa decima columna del body queda fuera del ancho que la tabla se calculo a si misma.
+- El icono de borrar ya tiene un patron consistente en el resto de la app (`app/projects/page.tsx`, `app/holidays/page.tsx`, `app/resources/page.tsx`): `<Trash2 size={14} />` de `lucide-react`, clase `text-red-400 hover:text-red-600`. Mis Horas usa hoy un caracter "X" con `text-gray-300 hover:text-red-500`.
+- Revise `Mi Reporte` (`app/mi-reporte/page.tsx`): su combo de proyecto vive en una barra de filtros separada, **fuera** de cualquier contenedor con `overflow` no-visible, asi que no sufre el mismo recorte. No tiene boton de borrar (es un reporte de solo lectura). El unico cambio que le aplica es el fix generico de `SearchableSelect` (portal), que lo hace mas robusto pero no cambia nada visible ahi hoy.
+
+## Decisiones
+
+1. **Nueva pagina `/dashboard`**: resumen visible para **todos** los roles autenticados (incluido colaborador), sin pasar por el matrix de `PagePermission` — mismo mecanismo que `/perfil` (se agrega a `ALWAYS_ALLOWED_AUTHENTICATED` en `middleware.ts`). Muestra: cantidad de usuarios activos, cantidad de proyectos, y los proximos feriados (`CountryHoliday`, ordenados por fecha, ej. los proximos 5-10 a partir de hoy). Se agrega como item fijo en el Sidebar (siempre visible, no filtrado por `allowedPages`), primero en la lista de navegacion.
+2. **`/` pasa a redirigir a `/dashboard`** en vez de `/gantt` — asi cualquier rol aterriza en una pantalla valida al loguearse.
+3. **"Acceso denegado" apunta a `/dashboard`** en vez de `/gantt` ("Ir al inicio" en vez de "Ir al Gantt") — coherente con el nuevo home universal.
+4. **No se toca la logica de permisos de Gantt ni Control de Horas** — el colaborador `cuslenghi@zircon.tech` sigue sin poder entrar a `/gantt` (es el comportamiento esperado por el matrix de roles); lo que se corrige es que ya no quede varado ahi por accidente al loguearse.
+5. **`SearchableSelect` se corrige para usar un portal** (`createPortal` a `document.body`), posicionado con `getBoundingClientRect()` del input, recalculado en scroll/resize mientras esta abierto. Esto lo hace inmune a cualquier ancestro con `overflow` recortado — corrige el combo de Mis Horas de raiz y refuerza (sin cambios visibles) los otros 8 combos ya migrados.
+6. **Tabla de Mis Horas**: se agrega una celda vacia en el `<thead>` (28px, mismo color de fondo que el resto del header) para que la columna del boton de borrar tenga su contraparte y la tabla calcule su ancho real incluyendola.
+7. **Icono de borrar fila** en Mis Horas pasa de "X" texto a `<Trash2 size={14} />`, clase `text-red-400 hover:text-red-600`, igual que Proyectos/Feriados/Recursos.
+8. **Mi Reporte**: sin cambios estructurales — se beneficia solo del fix generico de `SearchableSelect` (punto 5).
+
+## Tech Stack
+
+Sin cambios: Next.js 14 App Router, Prisma 5 + Turso, NextAuth 4 (JWT), TanStack Query v5, Tailwind, lucide-react. Sin librerias nuevas — `createPortal` es parte de `react-dom`, ya presente.
+
+## Project Structure
+
+```
+app/
+  dashboard/page.tsx        -> NUEVO: resumen (usuarios, proyectos, proximos feriados)
+  page.tsx                  -> cambia redirect('/gantt') a redirect('/dashboard')
+  unauthorized/page.tsx     -> cambia el link/label de "Ir al Gantt" a "Ir al inicio" (/dashboard)
+  mis-horas/page.tsx        -> header <th> spacer + icono Trash2 en vez de X
+  api/dashboard/summary/route.ts -> NUEVO: GET, cuenta usuarios activos + proyectos, proximos N feriados
+middleware.ts                -> agrega '/dashboard' a ALWAYS_ALLOWED_AUTHENTICATED
+components/layout/Sidebar.tsx -> agrega item "Dashboard" fijo (no filtrado por allowedPages)
+components/ui/SearchableSelect.tsx -> dropdown via createPortal + reposicionamiento en scroll/resize
+```
+
+## Code Style
+
+Seguir los patrones ya establecidos: rutas API con `export const dynamic = 'force-dynamic'` + `NextResponse.json`; paginas cliente con `'use client'` + TanStack Query; iconos de `lucide-react`; mismo lenguaje visual de tarjetas/tablas que el resto de la app (fondo blanco, borde `border-gray-200`, rounded-lg). El nuevo endpoint de dashboard no requiere `requireAdmin()` — es de lectura agregada, visible para cualquier sesion valida (igual que el propio middleware ya permite `/dashboard` a cualquier autenticado).
+
+## Testing Strategy
+
+Sin suite automatizada — verificacion manual + `npx tsc --noEmit` + `npm run build`, patron ya usado en todo el repo. Casos a verificar explicitamente:
+- Login con `cuslenghi@zircon.tech` aterriza en `/dashboard` (no en `/unauthorized`).
+- `/dashboard` es alcanzable por admin y por colaborador, muestra numeros coherentes con la base.
+- Un rol sin acceso a una pagina cualquiera, al chocar contra `/unauthorized`, el boton lleva a `/dashboard` y ese destino carga sin rebote.
+- En Mis Horas: abrir el combo de proyecto del picker de fila muestra la lista completa (no recortada), aunque la tabla tenga scroll horizontal activo.
+- La fila de la tabla y el header de Mis Horas quedan alineados (el boton de borrar ya no sobresale del borde de la tabla).
+- El icono de borrar fila es el tacho rojo, visualmente consistente con Proyectos/Feriados/Recursos.
+- Gantt y Control de Horas: sin cambios (confirmar con `git diff --stat`).
+
+## Boundaries
+
+- **Always**: resolver `/dashboard` como visible-para-todos via el mismo mecanismo que `/perfil` (`ALWAYS_ALLOWED_AUTHENTICATED`), no via nuevas `PagePermission` por rol (para no tener que acordarse de agregarlo a cada rol futuro).
+- **Ask first**: cualquier cambio a que paginas ve cada rol hoy (el matrix de `PagePermission` en si) — este spec no cambia permisos, solo la landing page y el fallback de error.
+- **Never**: tocar `app/gantt/page.tsx`, `app/admin/control-horas/page.tsx`, `components/gantt/*`, ni el flujo de permisos de `admin/permissions` — fuera de alcance, consistente con specs anteriores de esta sesion.
+
+## Success Criteria
+
+1. `cuslenghi@zircon.tech` puede loguearse y ve una pantalla de inicio valida (Dashboard), no "Acceso denegado".
+2. `/dashboard` existe, es visible para todos los roles autenticados, y muestra cantidad de usuarios, cantidad de proyectos y proximos feriados.
+3. `/` y la pantalla de "Acceso denegado" apuntan a `/dashboard`, no a `/gantt`.
+4. El combo de proyecto en el picker de fila de Mis Horas se despliega completo, sin recortes.
+5. El header y las filas de la tabla de Mis Horas quedan alineados; el boton de borrar ya no sobresale del borde de la tabla.
+6. El boton de borrar fila en Mis Horas usa el tacho de basura rojo (`Trash2`), igual que en Proyectos/Feriados/Recursos.
+7. `git diff --stat` confirma cero cambios en Gantt, Control de Horas y el matrix de permisos.
+8. `npx tsc --noEmit` y `npm run build` pasan sin errores.
