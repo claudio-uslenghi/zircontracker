@@ -154,22 +154,41 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Delete a single own entry by id.
+// Delete a single own entry by id (?id=), or bulk-delete a whole T&M month
+// for one project (?projectId=&month=YYYY-MM) — same query-param shape as
+// the admin bulk delete in app/api/time-entries/route.ts. The bulk path is
+// scoped to taskId: null so it only ever touches T&M entries, never the
+// per-task rows from the Detallado mode for the same project/month.
 export async function DELETE(req: NextRequest) {
   try {
     const resource = await requireOwnResource()
     const { searchParams } = req.nextUrl
-    const id = Number(searchParams.get('id'))
-    if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 })
+    const id = searchParams.get('id')
 
-    const entry = await prisma.timeEntry.findUnique({ where: { id } })
-    if (!entry) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (entry.resourceId !== resource.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    if (id) {
+      const entry = await prisma.timeEntry.findUnique({ where: { id: Number(id) } })
+      if (!entry) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      if (entry.resourceId !== resource.id) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+      await prisma.timeEntry.delete({ where: { id: Number(id) } })
+      return NextResponse.json({ ok: true })
     }
 
-    await prisma.timeEntry.delete({ where: { id } })
-    return NextResponse.json({ ok: true })
+    const projectId = Number(searchParams.get('projectId'))
+    const month = searchParams.get('month') // YYYY-MM
+    if (!projectId || !month || !/^\d{4}-\d{2}$/.test(month)) {
+      return NextResponse.json({ error: 'Parámetros inválidos (projectId y month=YYYY-MM)' }, { status: 400 })
+    }
+
+    const [y, m] = month.split('-').map(Number)
+    const from = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0))
+    const to = new Date(Date.UTC(y, m, 0, 23, 59, 59))
+
+    const { count } = await prisma.timeEntry.deleteMany({
+      where: { resourceId: resource.id, projectId, taskId: null, date: { gte: from, lte: to } },
+    })
+    return NextResponse.json({ deleted: count, month })
   } catch (err: unknown) {
     return forbiddenOrNoResource(err)
   }

@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { format } from 'date-fns'
+import { es } from 'date-fns/locale'
+import { Clock, TrendingUp, FolderKanban, CalendarDays } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import type { Project } from '@/types'
@@ -80,9 +83,33 @@ export default function MiReportePage() {
     retry: false,
   })
 
-  const days = pivotData?.days ?? []
-  const projectRows = pivotData?.resources?.[0]?.projects ?? []
+  const days = useMemo(() => pivotData?.days ?? [], [pivotData])
+  const projectRows = useMemo(() => pivotData?.resources?.[0]?.projects ?? [], [pivotData])
   const grandTotal = projectRows.reduce((s, p) => s + p.total, 0)
+
+  const dayTotals = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const day of days) {
+      m.set(day, projectRows.reduce((s, p) => s + (p.dailyHours[day] ?? 0) + (p.dailyExtraHours[day] ?? 0), 0))
+    }
+    return m
+  }, [days, projectRows])
+  const daysWithHours = days.filter((d) => (dayTotals.get(d) ?? 0) > 0)
+
+  // Mobile: same data as the pivot table, regrouped chronologically (one
+  // card per day) instead of one column per day — days with no hours are
+  // skipped so a sparse month doesn't turn into a long empty scroll.
+  const dayGroups = useMemo(
+    () =>
+      days
+        .map((day) => ({
+          day,
+          total: dayTotals.get(day) ?? 0,
+          entries: projectRows.filter((p) => (p.dailyHours[day] ?? 0) > 0 || (p.dailyExtraHours[day] ?? 0) > 0),
+        }))
+        .filter((g) => g.entries.length > 0),
+    [days, projectRows, dayTotals]
+  )
 
   const CELL_W = isMobile ? 30 : 34
   const NAME_W = isMobile ? 140 : 220
@@ -142,14 +169,97 @@ export default function MiReportePage() {
         </div>
       ) : (
         <>
-      {/* Info bar */}
-      <div className="flex items-center justify-between text-sm text-gray-500">
-        <span>{isFetching ? 'Cargando...' : `${projectRows.length} proyectos · ${days.length} días`}</span>
-        {grandTotal > 0 && <span className="font-semibold text-[#0170B9]">Total: {formatHours(grandTotal)} hs</span>}
+      {isFetching && <p className="text-xs text-gray-400">Cargando...</p>}
+
+      {/* Summary cards — same visual language as /dashboard. Gives the page
+          real content of its own instead of relying on the table to fill
+          the space, which used to look sparse with just a handful of rows. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
+            <Clock size={17} style={{ color: '#0170B9' }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-lg font-bold text-[#3a3a3a] truncate">{formatHours(grandTotal)}</p>
+            <p className="text-xs text-gray-500 truncate">Total horas</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
+            <TrendingUp size={17} style={{ color: '#0170B9' }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-lg font-bold text-[#3a3a3a] truncate">
+              {daysWithHours.length ? formatHours(grandTotal / daysWithHours.length) : '0'}
+            </p>
+            <p className="text-xs text-gray-500 truncate">Promedio/día con carga</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
+            <FolderKanban size={17} style={{ color: '#0170B9' }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-lg font-bold text-[#3a3a3a] truncate">{projectRows.length}</p>
+            <p className="text-xs text-gray-500 truncate">Proyectos</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
+            <CalendarDays size={17} style={{ color: '#0170B9' }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-lg font-bold text-[#3a3a3a] truncate">{daysWithHours.length}</p>
+            <p className="text-xs text-gray-500 truncate">Días con carga</p>
+          </div>
+        </div>
       </div>
 
-      {/* Pivot table */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-auto max-h-[700px]">
+      {isMobile ? (
+        /* Mobile: chronological day cards instead of the day-columns pivot —
+           no horizontal scrolling, and empty days don't take up space. */
+        <div className="space-y-3">
+          {dayGroups.length === 0 && !isFetching && (
+            <div className="bg-white rounded-lg border border-gray-200 p-8 text-center text-gray-400 text-sm">
+              No hay horas cargadas con los filtros seleccionados
+            </div>
+          )}
+          {dayGroups.map(({ day, total, entries }) => (
+            <div key={day} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className={`flex items-center justify-between px-4 py-2 text-sm font-semibold ${
+                isToday(day) ? 'bg-amber-50 text-amber-800' : 'bg-gray-50 text-gray-600'
+              }`}>
+                <span className="capitalize">{format(new Date(day + 'T12:00:00Z'), "EEEE d 'de' MMMM", { locale: es })}</span>
+                <span className="text-[#0170B9]">{formatHours(total)} hs</span>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {entries.map((p) => (
+                  <div key={p.projectId} className="flex items-center justify-between px-4 py-2 text-sm gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span style={{
+                        display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                        backgroundColor: p.projectColor, flexShrink: 0,
+                      }} />
+                      <span className="truncate">{p.projectName}</span>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-gray-700">{formatHours(p.dailyHours[day] ?? 0)} hs</span>
+                      {(p.dailyExtraHours[day] ?? 0) > 0 && (
+                        <span className="text-orange-600 text-xs font-semibold ml-1">
+                          +{formatHours(p.dailyExtraHours[day])}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+      /* Pivot table — desktop only. No forced height: it hugs its own
+         content, with a cap only for genuinely long date ranges. */
+      <div className="bg-white rounded-lg border border-gray-200 overflow-auto max-h-[60vh]">
         <table className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ position: 'sticky', top: 0, zIndex: 15 }}>
@@ -275,6 +385,7 @@ export default function MiReportePage() {
           )}
         </table>
       </div>
+      )}
       </>
       )}
     </div>
