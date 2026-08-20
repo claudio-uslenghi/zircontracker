@@ -67,8 +67,19 @@ export default function MisHorasPage() {
   const [tmDayValues, setTmDayValues] = useState<Record<number, number>>({})
   const [tmSaving, setTmSaving] = useState(false)
   const [tmSavedMsg, setTmSavedMsg] = useState('')
+  const [tmDeleting, setTmDeleting] = useState(false)
+
+  // Mobile Detallado view shows one day at a time — defaults to today when
+  // it falls inside the visible week, otherwise Monday.
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0)
 
   const days = weekDays(weekStart)
+
+  useEffect(() => {
+    const todayIndex = days.indexOf(isoDay(new Date()))
+    setSelectedDayIndex(todayIndex >= 0 ? todayIndex : 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart])
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['projects'],
@@ -241,6 +252,22 @@ export default function MisHorasPage() {
     }
   }
 
+  async function deleteTmMonth() {
+    const projectName = projectById.get(Number(tmProjectId))?.name ?? 'este proyecto'
+    const monthLabel = format(new Date(tmYear, tmMonth - 1, 1), 'MMMM yyyy', { locale: es })
+    if (!confirm(`¿Borrar TODAS las horas de "${projectName}" cargadas en ${monthLabel}? Esta acción no se puede deshacer.`)) return
+    setTmDeleting(true)
+    setTmSavedMsg('')
+    try {
+      const res = await fetch(`/api/me/time-entries?projectId=${tmProjectId}&month=${tmYm}`, { method: 'DELETE' })
+      const json = await res.json()
+      setTmSavedMsg(res.ok ? `Borradas ${json.deleted} entradas de ${monthLabel}` : (json.error ?? 'Error al borrar'))
+      qc.invalidateQueries({ queryKey: ['me-time-entries-tm', tmProjectId, tmYm] })
+    } finally {
+      setTmDeleting(false)
+    }
+  }
+
   // Column sizing shrinks on mobile so the fixed name column doesn't eat the
   // whole viewport, leaving the day columns scrollable but reachable.
   const CELL_W = isMobile ? 52 : 70
@@ -299,10 +326,127 @@ export default function MisHorasPage() {
             )}
           </div>
 
+          {/* Day picker — mobile only. Desktop shows every day at once as
+              grid columns, so this selector has nothing to do there. */}
+          {isMobile && (
+            <div className="grid grid-cols-7 gap-1">
+              {days.map((day, i) => (
+                <button
+                  key={day}
+                  onClick={() => setSelectedDayIndex(i)}
+                  className={`flex flex-col items-center justify-center rounded-lg py-2 text-xs font-medium transition-colors ${
+                    i === selectedDayIndex
+                      ? 'bg-[#0170B9] text-white'
+                      : isToday(day)
+                      ? 'bg-amber-50 text-amber-700 border border-amber-300'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <span>{DAY_LABELS[i]}</span>
+                  <span className="text-[10px] opacity-80">{day.substring(8)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {entriesError ? (
             <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-lg p-4 text-sm">
               {entriesError.message}
             </div>
+          ) : isMobile ? (
+            <>
+              {/* Mobile: one day at a time — a vertical list of tasks with a
+                  single hour input each, instead of the 7-column grid, so
+                  there's no horizontal scrolling and tap targets stay full-width. */}
+              <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
+                {isFetching && rowTaskIds.length === 0 && (
+                  <div className="text-center text-gray-400 text-sm py-6">Cargando...</div>
+                )}
+                {!isFetching && rowTaskIds.length === 0 && (
+                  <div className="text-center text-gray-400 text-sm py-6">Todavía no agregaste tareas esta semana.</div>
+                )}
+                {rowTaskIds.map((taskId) => {
+                  const row = grid.get(taskId) ?? {}
+                  const selectedDay = days[selectedDayIndex]
+                  return (
+                    <div key={taskId} className="flex items-center gap-3 px-4 py-3">
+                      <span style={{
+                        display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                        backgroundColor: rowColor(taskId), flexShrink: 0,
+                      }} />
+                      <span className="flex-1 min-w-0 truncate text-sm">{rowLabel(taskId)}</span>
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        defaultValue={row[selectedDay] ?? ''}
+                        onBlur={(e) => {
+                          const val = e.target.value === '' ? 0 : Number(e.target.value)
+                          if (val === (row[selectedDay] ?? 0)) return
+                          saveCell(taskId, selectedDay, val)
+                        }}
+                        key={`${taskId}-${selectedDay}-${refreshKey}`}
+                        style={{ fontSize: 16 }}
+                        className="w-20 border border-gray-300 rounded px-2 py-2 text-center focus:bg-blue-50 focus:outline-none focus:border-[#0170B9]"
+                      />
+                      <button
+                        onClick={() => removeRow(taskId)}
+                        className="text-red-400 hover:text-red-600 transition-colors p-1"
+                        title="Eliminar fila"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  )
+                })}
+                {rowTaskIds.length > 0 && (
+                  <div className="flex items-center justify-between px-4 py-3 bg-gray-50 font-semibold text-sm">
+                    <span className="text-gray-600">Total del día</span>
+                    <span className="text-[#0170B9]">
+                      {formatHours(rowTaskIds.reduce((s, id) => s + ((grid.get(id) ?? {})[days[selectedDayIndex]] ?? 0), 0))} hs
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Add-task picker — same fields as desktop's inline row, just
+                  stacked full-width instead of squeezed into a narrow cell. */}
+              <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-2">
+                <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <Plus size={13} className="text-[#0170B9] shrink-0" />
+                  Agregar tarea
+                </div>
+                <SearchableSelect
+                  value={pickerProjectId}
+                  onChange={(v) => { setPickerProjectId(v); setPickerTaskId('') }}
+                  options={projectOptions}
+                  placeholder="Proyecto..."
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <select
+                  value={pickerTaskId}
+                  onChange={(e) => setPickerTaskId(e.target.value)}
+                  disabled={!pickerProjectId}
+                  style={{ fontSize: 16 }}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm disabled:bg-gray-100"
+                >
+                  <option value="">Tarea...</option>
+                  {pickerTaskOptions.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={addRow}
+                  disabled={!pickerTaskId}
+                  className="w-full bg-[#0170B9] text-white rounded py-2 text-sm font-medium disabled:opacity-40"
+                >
+                  Agregar
+                </button>
+                {pickerProjectId && pickerTaskOptions.length === 0 && (
+                  <span className="text-xs text-gray-400">Sin tareas disponibles en este proyecto.</span>
+                )}
+              </div>
+            </>
           ) : (
             <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
               <table className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
@@ -583,13 +727,20 @@ export default function MisHorasPage() {
                 })}
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={saveTmMonth}
                   disabled={tmSaving}
                   className="px-4 py-2 bg-[#0170B9] text-white rounded text-sm hover:bg-[#005a94] disabled:opacity-50"
                 >
                   {tmSaving ? 'Guardando...' : 'Guardar mes'}
+                </button>
+                <button
+                  onClick={deleteTmMonth}
+                  disabled={tmDeleting}
+                  className="px-4 py-2 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 disabled:opacity-50"
+                >
+                  {tmDeleting ? 'Borrando...' : 'Borrar mes'}
                 </button>
                 {tmSavedMsg && <span className="text-sm text-gray-500">{tmSavedMsg}</span>}
               </div>

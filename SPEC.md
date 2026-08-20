@@ -407,3 +407,79 @@ Sin suite automatizada — verificacion manual + `npx tsc --noEmit` + `npm run b
 6. El boton de borrar fila en Mis Horas usa el tacho de basura rojo (`Trash2`), igual que en Proyectos/Feriados/Recursos.
 7. `git diff --stat` confirma cero cambios en Gantt, Control de Horas y el matrix de permisos.
 8. `npx tsc --noEmit` y `npm run build` pasan sin errores.
+
+---
+
+# Spec: Rediseno mobile de Mis Horas / Mi Reporte + borrado mensual en T&M
+
+## Objective
+
+Tres pedidos relacionados sobre las dos pantallas de autoservicio de horas:
+
+1. **Mobile de Mis Horas y Mi Reporte no es amigable.** Ambas usan una grilla ancha (columnas por dia) pensada para desktop, que en mobile obliga a scrollear horizontalmente entre columnas angostas — dificil de usar para cargar o leer horas desde el celular.
+2. **Mi Reporte en desktop se ve vacio con pocas filas.** Con 4-5 tareas la tabla es chica y queda mucho espacio en blanco entre el final de la tabla y el resto de la pagina; ademas, a diferencia del reporte admin (que compara muchos recursos), esta pantalla siempre muestra las horas de una sola persona, asi que el diseno "grilla densa" le queda grande.
+3. **T&M no tiene forma de borrar todo el mes cargado** — hoy solo se puede sobreescribir dia por dia a mano.
+
+## Hallazgos clave de la exploracion
+
+- **Mis Horas (modo Detallado)**: la grilla tiene 7 columnas de dia + nombre + total + borrar, con scroll horizontal (`overflow-x-auto`) y columnas que se angostan en mobile (52px) pero siguen siendo una grilla ancha — el patron clasico de "tabla de escritorio embutida en mobile" que las guias de usabilidad mobile actuales (Nielsen Norman Group, Material Design, Apple HIG) desaconsejan: dificulta comparar "que dia es este" mientras se scrollea, y los inputs de hora quedan con un area de toque chica.
+- **Mis Horas (modo T&M)**: ya usa una lista vertical (`divide-y`, un renglon por dia habil) — este modo **ya es mobile-friendly**, no necesita rediseno estructural.
+- **Mi Reporte**: la tabla pivot (proyecto x dia) tiene el mismo problema de columnas angostas en mobile, agravado porque es de solo lectura — el usuario tiene que retener mentalmente "que dia es la columna 4" mientras compara valores.
+- **La "gran zona en blanco" en Mi Reporte desktop no es un bug de altura forzada** — el contenedor usa `max-h-[700px]` con `overflow-auto`, que solo limita un maximo, no fuerza esa altura. Lo que realmente pasa es que la pagina no tiene mas contenido que una tabla chica: no hay ningun resumen/KPI arriba (a diferencia de `/dashboard`, que ya usa tarjetas de estadisticas), asi que con pocas filas la pagina se siente vacia. La solucion no es forzar que la tabla "llene" la pantalla, sino agregar contenido util (tarjetas de resumen) que le den sentido al espacio.
+- Ya existe **prior art de borrado masivo por mes** en `app/api/time-entries/route.ts` (admin, `DELETE ?month=YYYY-MM`, borra por rango de fecha con `deleteMany`) y su UI en `app/admin/hours/page.tsx` (tarjeta con borde rojo, badge "Irreversible", `confirm()` antes de llamar). El endpoint de colaborador (`app/api/me/time-entries/route.ts`) hoy solo soporta `DELETE ?id=` (una fila). Se extiende siguiendo el mismo patron ya validado, pero acotado por `resourceId` (server-side, nunca confiar en un id que mande el cliente) + `projectId` + rango del mes.
+- **Alcance del borrado**: "borrar todas las horas del mes" en T&M debe borrar solo las entradas de esa modalidad (`taskId: null`, `entryType: 'regular'`) para ese proyecto y mes — no las entradas del modo Detallado que el mismo usuario pudiera tener cargadas para el mismo proyecto en el mismo rango de fechas (son cosas distintas, aunque compartan `resourceId`+`projectId`+`date`).
+- `useIsMobile()` ya existe y es el breakpoint compartido (`max-width: 767px`) usado en toda la app — se reutiliza tal cual, sin breakpoints nuevos.
+
+## Decisiones
+
+1. **Mis Horas, modo Detallado, mobile**: se reemplaza la grilla de 7 columnas por una vista de **un dia a la vez** (patron ya estandar en apps de time-tracking mobile como Toggl/Clockify): navegacion de semana (← →, ya existe) + selector de dia dentro de esa semana (7 pastillas Lun-Dom, resaltando el dia seleccionado/hoy), y debajo una lista vertical de tareas para ese dia — cada fila con nombre de tarea + un input de horas a ancho completo + boton de borrar con area de toque comoda. El picker "+ Agregar tarea" pasa de celda angosta a bloque apilado a ancho completo. Toda la logica de datos (query, `saveCell`, `removeRow`, `addRow`, `grid`) se reutiliza sin cambios — solo cambia el JSX que se renderiza cuando `isMobile` es true. **Desktop no cambia**, sigue siendo la grilla semanal completa.
+2. **Mis Horas, modo T&M, mobile**: sin cambios estructurales (ya es una lista vertical). Se agrega ahi mismo el nuevo boton de borrado de mes (ver punto 4), con layout que se apila bien en mobile (ya usa `flex-wrap`).
+3. **Mi Reporte, mobile**: se reemplaza la tabla pivot por una **lista de tarjetas por dia** (patron "historial cronologico", como el resto de las apps de reporte personal) — un dia por tarjeta, solo los dias con horas cargadas (se saltean los dias en cero para no obligar a scrollear un mes entero vacio), cada tarjeta con fecha + lista de proyecto/horas (+extra en naranja como hoy) + total del dia. Arriba de la lista, las tarjetas de resumen del punto 5 (mismas para mobile y desktop). **Desktop sigue usando la tabla pivot** (es la vista correcta para comparar muchos dias de un vistazo en una pantalla ancha) pero con el fix del punto 5.
+4. **Mi Reporte, desktop**: se quita el `max-h-[700px]` fijo — la tabla pasa a ocupar su alto natural (con un tope razonable solo para rangos muy largos, `max-h-[60vh]`, que no se nota con pocas filas). Se agregan **tarjetas de resumen** arriba de la tabla (mismo lenguaje visual que las de `/dashboard`: icono en caja de color + numero grande + etiqueta): Total de horas, Promedio por dia con carga, Proyectos con horas, Dias con horas cargadas. Esto le da contenido real a la pagina en vez de forzar que una tabla chica "rellene" el espacio — soluciona la sensacion de vacio sin inventar altura artificial.
+5. **T&M — borrar mes completo**: nuevo boton "Borrar mes" junto a "Guardar mes", estilo boton secundario destructivo (borde/texto rojo, no relleno — para no competir visualmente con la accion primaria de guardar), deshabilitado sin proyecto elegido. Al clickear, `confirm()` con el nombre del proyecto y el mes (mismo patron que ya usa `removeRow` en Mis Horas y el borrado por mes de `admin/hours`). Llama al DELETE extendido de `/api/me/time-entries`, invalida la query de T&M — el `useEffect` existente que siembra `tmDayValues` desde `tmEntries` ya maneja el caso "sin entradas guardadas" (vuelve a `tmDefaultHours` por dia), asi que no hace falta logica extra de limpieza en el cliente.
+6. **No se toca el modo Detallado en desktop, ni Gantt, ni Control de Horas, ni ninguna pantalla de admin** — mismos limites que specs anteriores de esta sesion.
+7. **Fuera de alcance (recomendacion para mas adelante, no se implementa en este spec)**: un grafico de barras de horas por dia en Mi Reporte. Ayudaria a reconocer patrones de un vistazo, pero es una pieza de UI nueva (sin libreria de charts en el stack — habria que construir un SVG a medida) que amerita su propia iteracion en vez de sumarse a este cambio ya grande. Se deja documentado como siguiente paso sugerido.
+
+## Tech Stack
+
+Sin cambios: Next.js 14 App Router, Prisma 5 + Turso, NextAuth 4 (JWT), TanStack Query v5, Tailwind, lucide-react, date-fns. Sin librerias nuevas — nada de chart libraries (ver punto 7 de Decisiones).
+
+## Project Structure
+
+```
+app/
+  mis-horas/page.tsx   -> vista mobile de un dia a la vez (modo Detallado); boton "Borrar mes" en T&M
+  mi-reporte/page.tsx  -> tarjetas de resumen (desktop + mobile); tabla desktop sin max-height fijo; lista de tarjetas por dia en mobile
+  api/me/time-entries/route.ts -> DELETE se extiende: soporta ?id= (existente, una fila) o ?projectId=&month=YYYY-MM (nuevo, borrado masivo T&M acotado a resourceId propio + taskId null)
+```
+
+## Code Style
+
+Mismos patrones ya establecidos: `useIsMobile()` para branchear JSX por breakpoint (no CSS-only, ya que la reestructuracion mobile no es solo un reflow sino un layout distinto); tarjetas de resumen con el mismo markup que ya usa `app/dashboard/page.tsx` (icono en caja `#E6F2FA` + numero + label) para consistencia visual entre pantallas; confirmaciones destructivas con `confirm()` nativo (patron ya usado en `removeRow` y en `admin/hours`), sin modales nuevos. Ruta API: sigue `export const dynamic = 'force-dynamic'` + `NextResponse.json`, mismo `requireOwnResource()` para resolver el recurso del usuario.
+
+## Testing Strategy
+
+Sin suite automatizada — verificacion manual + `npx tsc --noEmit` + `npm run build`, patron ya usado en todo el repo. Casos a verificar explicitamente:
+- Mis Horas mobile (viewport <768px), modo Detallado: se ve un dia a la vez, se puede cambiar de dia con las pastillas, cargar/editar/borrar horas funciona igual que en desktop.
+- Mis Horas desktop: la grilla semanal de 7 columnas sigue igual que antes de este spec (sin regresiones).
+- Mi Reporte mobile: lista de tarjetas por dia, sin scroll horizontal, dias en cero no aparecen.
+- Mi Reporte desktop: tabla sin espacio en blanco forzado con pocas filas; tarjetas de resumen muestran numeros coherentes con la tabla.
+- T&M: "Borrar mes" pide confirmacion, borra solo las entradas T&M de ese proyecto/mes (no toca entradas del modo Detallado del mismo usuario/proyecto/rango), y despues de borrar los dias vuelven a mostrar `tmDefaultHours` (comportamiento de "sin datos guardados", no ceros).
+- Llamar el DELETE nuevo con un `projectId` de otro recurso (vía fetch directo) confirma que solo afecta al `resourceId` propio.
+- Gantt, Control de Horas, admin: sin cambios (`git diff --stat`).
+
+## Boundaries
+
+- **Always**: resolver el `resourceId` del borrado masivo server-side vía `requireOwnResource()`, nunca confiar en un `resourceId` que mande el cliente; mantener el modo Detallado de escritorio sin cambios de comportamiento.
+- **Ask first**: cualquier cambio al modelo de datos (`TimeEntry`, `Task`) — este spec es solo de UI/UX y un endpoint de borrado, no toca el schema.
+- **Never**: tocar Gantt, Control de Horas, o pantallas `/admin/*`; agregar una libreria de charts sin acordarlo antes (ver punto 7 de Decisiones).
+
+## Success Criteria
+
+1. En un viewport mobile, Mis Horas (modo Detallado) muestra un dia a la vez con navegacion por pastillas, sin scroll horizontal de columnas.
+2. En un viewport mobile, Mi Reporte muestra una lista de tarjetas por dia en vez de la tabla pivot, sin scroll horizontal.
+3. En desktop, Mi Reporte muestra tarjetas de resumen (total, promedio, proyectos, dias con carga) y la tabla ya no deja una franja de espacio en blanco forzada cuando hay pocas filas.
+4. T&M tiene un boton "Borrar mes" que, con confirmacion, elimina todas las entradas T&M (taskId null) de ese proyecto/mes para el usuario logueado, sin afectar entradas de otros proyectos, otros meses, u otros usuarios.
+5. Mis Horas desktop (modo Detallado) y T&M mantienen su comportamiento actual sin regresiones.
+6. Gantt, Control de Horas y las pantallas de admin quedan sin cambios (`git diff --stat` vacio).
+7. `npx tsc --noEmit` y `npm run build` pasan sin errores.
