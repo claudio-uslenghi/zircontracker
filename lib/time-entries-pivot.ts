@@ -23,7 +23,15 @@ export type PivotData = { days: string[]; resources: PivotResource[] }
 
 // Shared by the admin pivot view (app/api/time-entries) and the self-service
 // pivot view (app/api/me/time-entries) — same aggregation, different `where`.
-export async function buildTimeEntriesPivot(where: Prisma.TimeEntryWhereInput): Promise<PivotData> {
+//
+// `range` is the caller's already-computed date filter (if any). When both
+// ends are given, `days` is every day in that range — not just the days that
+// happen to have entries — so a filtered-but-sparse month still renders all
+// its columns instead of silently shrinking to whichever days have data.
+export async function buildTimeEntriesPivot(
+  where: Prisma.TimeEntryWhereInput,
+  range?: { from?: Date; to?: Date }
+): Promise<PivotData> {
   const entries = await prisma.timeEntry.findMany({
     where,
     include: {
@@ -75,7 +83,20 @@ export async function buildTimeEntriesPivot(where: Prisma.TimeEntryWhereInput): 
     res.total += e.hours
   }
 
-  const days = Array.from(daySet).sort()
+  let days: string[]
+  if (range?.from && range?.to) {
+    days = []
+    const cursor = new Date(Date.UTC(range.from.getUTCFullYear(), range.from.getUTCMonth(), range.from.getUTCDate()))
+    const end = new Date(Date.UTC(range.to.getUTCFullYear(), range.to.getUTCMonth(), range.to.getUTCDate()))
+    // Sanity cap — a full bounded range shouldn't realistically exceed a
+    // year of columns; guards against a caller passing an absurd range.
+    for (let i = 0; cursor <= end && i < 366; i++) {
+      days.push(cursor.toISOString().substring(0, 10))
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
+    }
+  } else {
+    days = Array.from(daySet).sort()
+  }
   const resources = Array.from(resourceMap.values())
     .sort((a, b) => a.resourceName.localeCompare(b.resourceName))
     .map((r) => ({ ...r, projects: Array.from(r.projects.values()).sort((a, b) => b.total - a.total) }))

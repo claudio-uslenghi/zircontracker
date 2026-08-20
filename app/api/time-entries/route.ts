@@ -130,7 +130,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (view === 'pivot') {
-    const pivot = await buildTimeEntriesPivot(where)
+    const pivot = await buildTimeEntriesPivot(where, { from, to })
     return NextResponse.json(pivot)
   }
 

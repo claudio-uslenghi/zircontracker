@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSession, requireAdmin } from '@/lib/auth'
+import { getSession, requireAdminOrOwnResource } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
   const session = await getSession()
@@ -18,9 +18,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(tasks)
 }
 
+// Any authenticated user with a linked Resource may create a task (not just
+// admin) — editing/deleting tasks stays admin-only via ProjectModal.
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin()
+    await requireAdminOrOwnResource()
     const { projectId, name } = await req.json()
 
     if (!projectId || !name?.trim()) {
