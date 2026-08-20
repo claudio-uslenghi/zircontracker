@@ -119,7 +119,7 @@ export default function MisHorasPage() {
 
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects])
   const projectOptions = useMemo(
-    () => projects.map((p) => ({ value: String(p.id), label: p.name })).sort((a, b) => a.label.localeCompare(b.label)),
+    () => projects.filter((p) => p.status !== 'Finalizado').map((p) => ({ value: String(p.id), label: p.name })).sort((a, b) => a.label.localeCompare(b.label)),
     [projects]
   )
   const taskById = useMemo(() => new Map(allTasks.map((t) => [t.id, t])), [allTasks])

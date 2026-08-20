@@ -562,3 +562,58 @@ Sin suite automatizada — verificacion manual + `npx tsc --noEmit` + `npm run b
 5. Las entradas cargadas en modo T&M (sin tarea) son visibles y editables desde el modo Detallado, y se puede agregar una fila "sin tarea" manualmente ahi tambien.
 6. Gantt, Control de Horas y pantallas de admin quedan sin cambios (`git diff --stat` vacio salvo `lib/time-entries-pivot.ts` y `app/api/time-entries/route.ts`, que son fix de libreria compartida, no UI).
 7. `npx tsc --noEmit` y `npm run build` pasan sin errores.
+
+---
+
+# Spec: Ocultar proyectos finalizados en los combos de Mis Horas y Mi Reporte
+
+## Objective
+
+En los combos de proyecto de `Mis Horas` y `Mi Reporte`, no listar los proyectos con status "Finalizado" — el usuario no deberia poder elegir para cargar horas (o filtrar un reporte) un proyecto que ya termino.
+
+## Hallazgos clave de la exploracion
+
+- `Project.status` es un string libre (sin enum en el schema). El valor exacto usado en toda la app es `'Finalizado'` — confirmado en `components/modals/ProjectModal.tsx` (lista de opciones del select de status) y en `app/projects/page.tsx:70`, que ya tiene un filtro identico: `list = list.filter(p => p.status !== 'Finalizado')`.
+- En ambas pantallas, `projectOptions` (el array que alimenta el combo `SearchableSelect`) ya esta separado de los datos usados para *mostrar* filas existentes:
+  - `app/mis-horas/page.tsx`: `projectOptions` (linea 121) solo alimenta los dos combos de proyecto (el picker de fila en Detallado, y el selector de T&M); `projectById` (mapa completo, sin filtrar) sigue resolviendo nombre/color para filas ya cargadas — necesario para que una fila con horas en un proyecto ya finalizado siga mostrandose correctamente en la tabla.
+  - `app/mi-reporte/page.tsx`: `projectOptions` (linea 67) solo alimenta el combo de filtro; las filas de la tabla vienen del pivot de la API (`projectRows`), no de esta lista, asi que no se ven afectadas.
+- Consecuencia directa de lo anterior: **filtrar `projectOptions` no rompe nada existente** — un proyecto finalizado con horas ya cargadas sigue viendose en la tabla de Mis Horas o en el reporte, simplemente deja de ofrecerse como opcion nueva para elegir.
+
+## Decisiones
+
+1. En ambas pantallas, `projectOptions` pasa a excluir `p.status === 'Finalizado'` antes de mapear a `{value, label}` — un solo `.filter()` agregado a la memo existente, sin nuevo estado ni toggle (a diferencia de `/projects`, que si tiene un selector "activos/todos/finalizado"; aca no se pide eso, es un filtro fijo).
+2. Sin cambios en `/projects` (que ya tiene su propio filtro, con toggle) ni en ninguna otra pantalla — el pedido es especificamente Mis Horas y Mi Reporte.
+
+## Tech Stack
+
+Sin cambios.
+
+## Project Structure
+
+```
+app/mis-horas/page.tsx    -> projectOptions excluye status === 'Finalizado'
+app/mi-reporte/page.tsx   -> projectOptions excluye status === 'Finalizado'
+```
+
+## Code Style
+
+Un `.filter()` mas en la misma cadena que ya arma `projectOptions` (`.filter(...).map(...).sort(...)`), sin introducir helpers ni constantes nuevas — mismo patron que el filtro ya existente en `/projects`.
+
+## Testing Strategy
+
+Verificacion manual + `npx tsc --noEmit` + `npm run build`. Casos a verificar:
+- Un proyecto con status "Finalizado" no aparece en el combo de proyecto de Mis Horas (ni en el picker de fila de Detallado, ni en el selector de T&M) ni en el combo de Mi Reporte.
+- Una fila ya cargada en Mis Horas para un proyecto que despues paso a "Finalizado" sigue mostrandose en la tabla con nombre y color correctos (no desaparece ni rompe).
+- El reporte de Mi Reporte sigue mostrando correctamente las horas de un proyecto finalizado si el usuario ya tiene horas cargadas ahi (el combo de filtro no lo ofrece para elegir, pero si eligio "Todos los proyectos" el dato sigue apareciendo).
+- `/projects`, Gantt, Control de Horas, admin: sin cambios (`git diff --stat`).
+
+## Boundaries
+
+- **Never**: tocar `/projects`, Gantt, Control de Horas o pantallas de admin; agregar un enum/migracion para `Project.status` (fuera de alcance, sigue siendo string libre).
+
+## Success Criteria
+
+1. Los combos de proyecto de Mis Horas (picker de fila y T&M) y Mi Reporte no listan proyectos con status "Finalizado".
+2. Filas/datos ya existentes de proyectos finalizados se siguen mostrando sin cambios en ambas pantallas.
+3. `git diff --stat` confirma cambios unicamente en `app/mis-horas/page.tsx` y `app/mi-reporte/page.tsx`.
+4. `npx tsc --noEmit` y `npm run build` pasan sin errores.
