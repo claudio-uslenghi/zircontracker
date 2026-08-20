@@ -29,11 +29,11 @@ export default function UnauthorizedPage() {
           No tenés permiso para acceder a esta sección. Contactá al administrador si creés que es un error.
         </p>
         <Link
-          href="/gantt"
+          href="/dashboard"
           className="inline-block py-2 px-6 rounded-lg text-white text-sm font-medium"
           style={{ backgroundColor: '#0170B9' }}
         >
-          Ir al Gantt
+          Ir al inicio
         </Link>
       </div>
     </div>

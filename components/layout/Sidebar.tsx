@@ -19,11 +19,16 @@ import {
   Clock,
   TrendingUp,
   CalendarClock,
+  LayoutDashboard,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSession, signOut } from 'next-auth/react'
 import { useIsMobile } from '@/lib/use-is-mobile'
+
+// Visible to every authenticated role regardless of the PagePermission
+// matrix — same treatment as /perfil in middleware.ts's ALWAYS_ALLOWED_AUTHENTICATED.
+const UNIVERSAL_NAV_ITEM = { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }
 
 const NAV_ITEMS = [
   { href: '/gantt', icon: BarChart3, label: 'Gantt' },
@@ -64,9 +69,10 @@ export default function Sidebar({ mobileOpen, onClose }: Props) {
   // of the desktop icon-only "collapsed" preference.
   const showLabels = !collapsed || isMobile
 
-  const visibleNavItems = isAdmin
-    ? NAV_ITEMS
-    : NAV_ITEMS.filter((item) => allowedPages.includes(item.href))
+  const visibleNavItems = [
+    UNIVERSAL_NAV_ITEM,
+    ...(isAdmin ? NAV_ITEMS : NAV_ITEMS.filter((item) => allowedPages.includes(item.href))),
+  ]
 
   return (
     <>

@@ -5,7 +5,7 @@ const PUBLIC_PATHS = ['/login', '/api/auth', '/unauthorized']
 
 // Accessible to any authenticated user regardless of their PagePermission
 // matrix — e.g. changing your own password isn't a "page" you're granted.
-const ALWAYS_ALLOWED_AUTHENTICATED = ['/perfil']
+const ALWAYS_ALLOWED_AUTHENTICATED = ['/perfil', '/dashboard']
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
@@ -31,6 +31,14 @@ export async function middleware(req: NextRequest) {
 
   // API routes: just verify token exists (role checks done in each handler)
   if (pathname.startsWith('/api/')) {
+    return NextResponse.next()
+  }
+
+  // Root path always redirects to /dashboard (see app/page.tsx) — let it
+  // through unconditionally so that redirect can fire for every role. The
+  // actual destination, /dashboard, is re-checked by this same middleware
+  // on the follow-up request (it's in ALWAYS_ALLOWED_AUTHENTICATED above).
+  if (pathname === '/') {
     return NextResponse.next()
   }
 
