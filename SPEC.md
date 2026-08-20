@@ -483,3 +483,82 @@ Sin suite automatizada — verificacion manual + `npx tsc --noEmit` + `npm run b
 5. Mis Horas desktop (modo Detallado) y T&M mantienen su comportamiento actual sin regresiones.
 6. Gantt, Control de Horas y las pantallas de admin quedan sin cambios (`git diff --stat` vacio).
 7. `npx tsc --noEmit` y `npm run build` pasan sin errores.
+
+---
+
+# Spec: Fix rango de dias en Mi Reporte, tareas T&M visibles en Detallado, crear tareas desde Mis Horas, sidebar
+
+## Objective
+
+Cinco pedidos sobre las mismas dos pantallas de autoservicio, mas la marca en el sidebar:
+
+1. **Mi Reporte solo muestra los dias con horas cargadas, no el rango filtrado.** Con "Desde 01/08" y "Hasta 31/08" seleccionado, la tabla solo mostro 5 columnas (17 al 21) porque esos fueron los unicos dias con datos esa semana — el resto del mes no aparece aunque este dentro del filtro.
+2. **Mis Horas no deja crear tareas nuevas** — el picker de fila solo ofrece tareas que un admin ya haya cargado desde `/projects`. El usuario quiere poder agregar una tarea nueva ahi mismo.
+3. **La tabla de Mis Horas se ve chica en pantallas anchas** — pedido abierto de mejora visual/UX.
+4. **El nombre "ZirconTracker" se corta en el sidebar** (se ve "ZirconTrac...").
+5. **Las horas cargadas en modo Time & Material no aparecen en modo Detallado.** El usuario quiere verlas y poder editarlas ahi tambien — que "sin tarea asignada" no sea motivo para ocultarlas.
+
+## Hallazgos clave de la exploracion
+
+- **Causa raiz del bug de Mi Reporte**: `lib/time-entries-pivot.ts` arma la lista de columnas (`days`) recorriendo las entradas encontradas y agregando cada fecha que aparece en al menos una (`daySet.add(dayKey)` dentro del loop de entries) — nunca a partir del rango pedido (`dateFrom`/`dateTo`). Si el usuario cargo horas solo 5 dias del mes, la tabla muestra exactamente esos 5 dias sin importar que el filtro diga "todo agosto". Esta funcion es compartida por `/api/me/time-entries` (Mi Reporte) y `/api/time-entries` (el pivot que usa `admin/daily-report`) — mismo bug latente ahi tambien, aunque no fue lo reportado.
+- **"Agregar tareas" hoy es admin-only por diseno explicito** (`app/api/tasks/route.ts`, `POST` con `requireAdmin()`) — decision tomada en el spec original de este feature ("solo el admin puede crear/editar/borrar Task"). El pedido actual solo pide destrabar la creacion para el propio usuario, no edicion ni borrado — esas siguen siendo admin-only via `components/modals/ProjectModal.tsx` (sin cambios).
+- **Por que las horas T&M no aparecen en Detallado**: `app/mis-horas/page.tsx` arma la grilla del modo Detallado con `if (e.taskId == null) continue` — descarta explicitamente cualquier entrada sin tarea. Las filas se identifican solo por `taskId` (`Map<number, ...>`), lo que ademas no alcanzaria para distinguir "sin tarea del Proyecto A" de "sin tarea del Proyecto B" si simplemente se dejara de filtrar — hace falta que la identidad de fila sea `(projectId, taskId | null)`, no solo `taskId`.
+- **Por que el nombre se corta**: el header del sidebar pone logo + "ZirconTracker" en una fila (`flex items-center gap-2.5`) compartiendo ancho con el boton de colapsar/cerrar; a `w-52` (208px) menos padding, icono y boton, quedan ~100px para un texto bold de 16px — no entra. Poner el icono arriba y el nombre debajo (columna en vez de fila) le da al texto el ancho casi completo del sidebar para el mismo contenido.
+- **Por que Mis Horas "se ve chica"**: la tarjeta de la tabla no tiene `w-full` — se achica al ancho de sus columnas fijas (~830px) y deja un area en blanco a la derecha en pantallas anchas, el mismo tipo de "espacio vacio" que ya se resolvio para Mi Reporte agregando contenido real (tarjetas de resumen) en el spec anterior.
+
+## Decisiones
+
+1. **`buildTimeEntriesPivot` arma `days` a partir del rango pedido cuando el llamador lo pasa completo** (`from` y `to` ambos definidos), generando cada dia del rango sin importar si tiene entradas o no; si el rango no viene completo (llamado sin filtro de fecha), se mantiene el comportamiento actual (dias derivados de los datos). Se actualizan **ambos** llamadores (`app/api/me/time-entries/route.ts` y `app/api/time-entries/route.ts`) para pasar su `from`/`to` ya calculado — arregla Mi Reporte y de paso el mismo bug latente en `admin/daily-report`, sin tocar ninguna pantalla de admin (el fix vive en la libreria compartida + una linea en la ruta API).
+2. **Creacion de tareas desde Mis Horas**: en el picker de fila, el `<select>` de tarea suma una opcion "+ Crear tarea nueva..." que revela un input de texto + boton confirmar; al confirmar, `POST /api/tasks` con `{projectId, name}` y la tarea recien creada queda seleccionada. Se relaja el auth de `POST /api/tasks` de `requireAdmin()` a un nuevo helper `requireAdminOrOwnResource()` en `lib/auth.ts` (admin, o cualquier usuario con `Resource` propio vinculado por email) — mismo patron ya usado por `requireSelfOrAdmin`/`requireOwnResource`. PUT/DELETE de tareas siguen siendo admin-only (sin cambios) — este pedido es solo "agregar", no editar ni borrar.
+3. **Mis Horas desktop, mas contenido util**: la tarjeta de la tabla pasa a `w-full`; se agregan tarjetas de resumen arriba (mismo lenguaje visual que Mi Reporte/Dashboard) — Total semana, Proyectos, Tareas activas. Con el punto 5 (T&M visible en Detallado) la tabla tambien va a tener naturalmente mas filas para quien usa ambos modos, lo que ayuda a la misma sensacion de "tabla chica".
+4. **Sidebar**: el bloque de marca pasa de fila a columna (icono arriba, nombre debajo, ambos centrados) cuando `showLabels` es true; el boton de colapsar/cerrar se reposiciona como elemento independiente (esquina superior derecha) en vez de compartir la fila con el logo. En estado colapsado (desktop, icono-only) el comportamiento no cambia: sigue sin mostrar logo ni nombre, solo el boton de expandir (tal cual hoy).
+5. **T&M visible y editable en Detallado**: se generaliza la identidad de fila de `taskId: number` a un par `(projectId, taskId | null)` — clave compuesta `"${projectId}:${taskId ?? 'none'}"`. Se deja de filtrar las entradas con `taskId == null` al armar la grilla; una fila sin tarea se etiqueta `"<Proyecto>: Sin tarea (T&M)"` y es editable celda por celda igual que cualquier otra fila (mismo `PUT` de siempre, que ya acepta `taskId: null`). El picker de fila suma una opcion "Sin tarea (Time & Material)" en el `<select>` de tarea para poder agregar una fila asi manualmente tambien desde Detallado. Edita los mismos registros que ve T&M (misma tabla `TimeEntry`), asi que cambios hechos desde una pestana se reflejan en la otra al volver a visitarla (TanStack Query ya refetchea al re-habilitarse la query, sin necesidad de invalidacion cruzada extra).
+6. **No se toca Gantt, Control de Horas, ni ninguna pantalla `/admin/*`** — mismos limites que specs anteriores. El fix de `time-entries-pivot.ts` es una libreria compartida, no una pantalla; no implica cambios visibles en `admin/daily-report`.
+
+## Tech Stack
+
+Sin cambios: Next.js 14 App Router, Prisma 5 + Turso, NextAuth 4 (JWT), TanStack Query v5, Tailwind, lucide-react, date-fns. Sin librerias nuevas.
+
+## Project Structure
+
+```
+lib/time-entries-pivot.ts        -> buildTimeEntriesPivot acepta un rango opcional {from, to} para generar `days`
+lib/auth.ts                      -> + requireAdminOrOwnResource()
+app/api/tasks/route.ts           -> POST usa requireAdminOrOwnResource() en vez de requireAdmin()
+app/api/me/time-entries/route.ts -> pasa {from, to} a buildTimeEntriesPivot
+app/api/time-entries/route.ts    -> pasa {from, to} a buildTimeEntriesPivot (mismo fix para admin/daily-report)
+app/mis-horas/page.tsx           -> filas por (projectId, taskId|null); crear tarea inline; tarjetas de resumen; card w-full
+components/layout/Sidebar.tsx    -> bloque de marca en columna (icono arriba, nombre debajo)
+```
+
+## Code Style
+
+Mismos patrones ya establecidos: helpers de autorizacion en `lib/auth.ts` siguiendo el estilo de `requireSelfOrAdmin`/`requireOwnResource` (resuelven el `Resource` propio por email de sesion, nunca confian en un id que mande el cliente); tarjetas de resumen con el mismo markup que ya usan Mi Reporte/Dashboard; claves compuestas de fila como string simple (`"${projectId}:${taskId ?? 'none'}"`) con un par de funciones `rowKey`/`parseRowKey`, sin introducir un tipo/clase nueva para algo tan chico.
+
+## Testing Strategy
+
+Sin suite automatizada — verificacion manual + `npx tsc --noEmit` + `npm run build`. Casos a verificar explicitamente:
+- Mi Reporte con el mes completo seleccionado y horas cargadas solo en 5 dias: la tabla muestra las 30/31 columnas del mes, con los dias sin carga en blanco (no ocultos).
+- Mi Reporte con un rango de dias mas acotado (ej. una semana): muestra exactamente esos dias, ni mas ni menos.
+- Mis Horas: crear una tarea nueva desde el picker de fila, confirmar que aparece disponible para seleccionar y que la fila se puede cargar con horas normalmente.
+- Un usuario sin rol admin ni `Resource` vinculado que intente `POST /api/tasks` recibe 403.
+- Mis Horas Detallado: una entrada cargada desde T&M (sin tarea) aparece como fila "Proyecto: Sin tarea (T&M)", editable celda por celda; el cambio se refleja si se vuelve a visitar la pestana T&M para ese proyecto/mes.
+- Agregar una fila "Sin tarea (Time & Material)" manualmente desde el picker de Detallado y cargarle horas — se guarda igual que cualquier entrada T&M.
+- Sidebar expandido: "ZirconTracker" se ve completo, sin truncar, con el icono arriba. Sidebar colapsado (desktop): comportamiento sin cambios (solo boton de expandir).
+- Gantt, Control de Horas, admin: sin cambios (`git diff --stat`).
+
+## Boundaries
+
+- **Always**: resolver el `Resource` propio server-side por email de sesion para el nuevo helper de autorizacion, nunca confiar en datos que mande el cliente; mantener PUT/DELETE de tareas admin-only.
+- **Ask first**: cualquier cambio al limite de cuantas tareas puede crear un colaborador, o a permitirles editar/borrar tareas (este spec es solo "crear").
+- **Never**: tocar Gantt, Control de Horas, o pantallas `/admin/*`; agregar validacion de duplicados a nivel de base de datos para `Task.name` (fuera de alcance — un chequeo simple del lado cliente alcanza).
+
+## Success Criteria
+
+1. Mi Reporte muestra todos los dias del rango filtrado (por defecto el mes completo), no solo los dias con horas cargadas.
+2. Se puede crear una tarea nueva desde el picker de fila de Mis Horas sin pasar por `/projects`.
+3. Mis Horas desktop tiene tarjetas de resumen y la tabla ocupa el ancho completo de la tarjeta contenedora.
+4. "ZirconTracker" se lee completo en el sidebar expandido.
+5. Las entradas cargadas en modo T&M (sin tarea) son visibles y editables desde el modo Detallado, y se puede agregar una fila "sin tarea" manualmente ahi tambien.
+6. Gantt, Control de Horas y pantallas de admin quedan sin cambios (`git diff --stat` vacio salvo `lib/time-entries-pivot.ts` y `app/api/time-entries/route.ts`, que son fix de libreria compartida, no UI).
+7. `npx tsc --noEmit` y `npm run build` pasan sin errores.

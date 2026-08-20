@@ -93,15 +93,17 @@ export default function Sidebar({ mobileOpen, onClose }: Props) {
         )}
         style={{ backgroundColor: '#0170B9' }}
       >
-        {/* Logo */}
-        <div className="flex items-center justify-between px-4 py-4 border-b border-white/20">
+        {/* Logo — icon above the name so the name gets the sidebar's full
+            width instead of squeezing next to the collapse/close button,
+            which is what caused "ZirconTracker" to truncate. */}
+        <div className="relative px-4 py-4 border-b border-white/20">
           {showLabels && (
-            <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex flex-col items-center gap-2">
               <div className="w-9 h-9 rounded-md bg-white shrink-0 overflow-hidden">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/icon.jpg" alt="ZirconTech" className="w-full h-full object-contain" />
               </div>
-              <span className="font-bold text-base leading-tight text-white tracking-wide truncate">
+              <span className="font-bold text-sm leading-tight text-white tracking-wide text-center">
                 ZirconTracker
               </span>
             </div>
@@ -109,7 +111,7 @@ export default function Sidebar({ mobileOpen, onClose }: Props) {
           {isMobile ? (
             <button
               onClick={onClose}
-              className="ml-auto text-white/70 hover:text-white transition-colors p-1 rounded hover:bg-white/10 shrink-0"
+              className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors p-1 rounded hover:bg-white/10 shrink-0"
               aria-label="Cerrar menú"
             >
               <X size={20} />
@@ -117,7 +119,8 @@ export default function Sidebar({ mobileOpen, onClose }: Props) {
           ) : (
             <button
               onClick={() => setCollapsed((c) => !c)}
-              className="ml-auto text-white/70 hover:text-white transition-colors p-1 rounded hover:bg-white/10 shrink-0"
+              style={{ position: 'absolute', top: 16, right: showLabels ? 16 : '50%', transform: showLabels ? undefined : 'translateX(50%)' }}
+              className="text-white/70 hover:text-white transition-colors p-1 rounded hover:bg-white/10 shrink-0"
             >
               {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
             </button>

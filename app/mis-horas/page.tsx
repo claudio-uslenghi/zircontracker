@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfWeek, addDays, addWeeks, format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Clock, FolderKanban, ListChecks } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import type { Task, TimeEntry, Project } from '@/types'
@@ -39,6 +39,18 @@ function isToday(dayKey: string) {
   return dayKey === isoDay(new Date())
 }
 
+// Row identity in Detallado mode is (project, task) — task is nullable
+// because T&M entries have no task, and they now show up here too, so a
+// bare taskId can't identify a row on its own (two different projects could
+// each have a "no task" row).
+function rowKey(projectId: number, taskId: number | null) {
+  return `${projectId}:${taskId ?? 'none'}`
+}
+function parseRowKey(key: string): { projectId: number; taskId: number | null } {
+  const [projectId, taskId] = key.split(':')
+  return { projectId: Number(projectId), taskId: taskId === 'none' ? null : Number(taskId) }
+}
+
 // /api/me/* returns a JSON error body (not an array) on 403/404 — surface it
 // as a query error instead of letting downstream array methods crash the page.
 async function fetchMeJson(url: string) {
@@ -56,9 +68,11 @@ export default function MisHorasPage() {
   const today = new Date()
   const [mode, setMode] = useState<'detailed' | 'tm'>('detailed')
   const [weekStart, setWeekStart] = useState(isoDay(startOfWeek(today, { weekStartsOn: 1 })))
-  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([])
+  const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([])
   const [pickerProjectId, setPickerProjectId] = useState('')
   const [pickerTaskId, setPickerTaskId] = useState('')
+  const [newTaskName, setNewTaskName] = useState('')
+  const [creatingTask, setCreatingTask] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
 
   const [tmProjectId, setTmProjectId] = useState('')
@@ -110,73 +124,103 @@ export default function MisHorasPage() {
   )
   const taskById = useMemo(() => new Map(allTasks.map((t) => [t.id, t])), [allTasks])
 
+  // Keyed by (projectId, taskId) — includes T&M entries (taskId: null) too,
+  // so hours loaded from the T&M tab show up and are editable here as well.
   const grid = useMemo(() => {
-    const m = new Map<number, Record<string, number>>()
+    const m = new Map<string, Record<string, number>>()
     for (const e of entries) {
-      if (e.taskId == null) continue
+      const key = rowKey(e.projectId, e.taskId)
       const day = e.date.substring(0, 10)
-      if (!m.has(e.taskId)) m.set(e.taskId, {})
-      m.get(e.taskId)![day] = e.hours
+      if (!m.has(key)) m.set(key, {})
+      m.get(key)![day] = e.hours
     }
     return m
   }, [entries])
 
-  // Rows shown = tasks explicitly added this session ∪ any task with hours this week
-  const rowTaskIds = useMemo(() => {
-    const s = new Set(selectedTaskIds)
-    for (const e of entries) if (e.taskId != null) s.add(e.taskId)
-    return Array.from(s).filter((id) => taskById.has(id) || grid.has(id))
-  }, [selectedTaskIds, entries, taskById, grid])
+  // Rows shown = rows explicitly added this session ∪ any (project, task) with hours this week
+  const rowKeys = useMemo(() => {
+    const s = new Set(selectedRowKeys)
+    for (const e of entries) s.add(rowKey(e.projectId, e.taskId))
+    return Array.from(s).filter((key) => {
+      const { projectId, taskId } = parseRowKey(key)
+      if (!projectById.has(projectId)) return false
+      if (taskId == null) return true
+      return taskById.has(taskId) || grid.has(key)
+    })
+  }, [selectedRowKeys, entries, projectById, taskById, grid])
 
-  function rowLabel(taskId: number) {
+  function rowLabel(key: string) {
+    const { projectId, taskId } = parseRowKey(key)
+    const projectName = projectById.get(projectId)?.name ?? `Proyecto #${projectId}`
+    if (taskId == null) return `${projectName}: Sin tarea (T&M)`
     const task = taskById.get(taskId)
-    if (!task) return `Tarea #${taskId}`
-    const project = projectById.get(task.projectId)
-    return project ? `${project.name}: ${task.name}` : task.name
+    return `${projectName}: ${task?.name ?? `Tarea #${taskId}`}`
   }
 
-  function rowColor(taskId: number) {
-    const task = taskById.get(taskId)
-    const project = task ? projectById.get(task.projectId) : undefined
-    return project?.color ?? '#9ca3af'
+  function rowColor(key: string) {
+    const { projectId } = parseRowKey(key)
+    return projectById.get(projectId)?.color ?? '#9ca3af'
   }
 
   const pickerTaskOptions = useMemo(
-    () => allTasks.filter((t) => t.active && String(t.projectId) === pickerProjectId && !rowTaskIds.includes(t.id)),
-    [allTasks, pickerProjectId, rowTaskIds]
+    () => allTasks.filter((t) => t.active && String(t.projectId) === pickerProjectId && !rowKeys.includes(rowKey(t.projectId, t.id))),
+    [allTasks, pickerProjectId, rowKeys]
   )
+  const pickerNoTaskAlreadyAdded = pickerProjectId ? rowKeys.includes(rowKey(Number(pickerProjectId), null)) : false
 
-  const weekTotal = rowTaskIds.reduce((sum, taskId) => {
-    const row = grid.get(taskId) ?? {}
+  const weekTotal = rowKeys.reduce((sum, key) => {
+    const row = grid.get(key) ?? {}
     return sum + days.reduce((s, d) => s + (row[d] ?? 0), 0)
   }, 0)
+  const weekProjectCount = useMemo(() => new Set(rowKeys.map((k) => parseRowKey(k).projectId)).size, [rowKeys])
+  const weekTaskCount = useMemo(() => rowKeys.filter((k) => parseRowKey(k).taskId != null).length, [rowKeys])
 
   function addRow() {
-    if (!pickerTaskId) return
-    setSelectedTaskIds((prev) => [...prev, Number(pickerTaskId)])
+    if (!pickerProjectId || !pickerTaskId || pickerTaskId === '__new__') return
+    const taskId = pickerTaskId === '__none__' ? null : Number(pickerTaskId)
+    setSelectedRowKeys((prev) => [...prev, rowKey(Number(pickerProjectId), taskId)])
     setPickerProjectId('')
     setPickerTaskId('')
   }
 
-  async function removeRow(taskId: number) {
-    const row = grid.get(taskId) ?? {}
+  async function createTask() {
+    if (!pickerProjectId || !newTaskName.trim()) return
+    setCreatingTask(true)
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: Number(pickerProjectId), name: newTaskName.trim() }),
+      })
+      const task = await res.json()
+      if (res.ok) {
+        await qc.invalidateQueries({ queryKey: ['tasks'] })
+        setPickerTaskId(String(task.id))
+        setNewTaskName('')
+      }
+    } finally {
+      setCreatingTask(false)
+    }
+  }
+
+  async function removeRow(key: string) {
+    const { projectId, taskId } = parseRowKey(key)
+    const row = grid.get(key) ?? {}
     const hasHours = Object.values(row).some((h) => h > 0)
     if (hasHours) {
-      if (!confirm(`¿Eliminar "${rowLabel(taskId)}"? Se van a borrar las horas cargadas esta semana para esta fila.`)) return
-      const idsToDelete = entries.filter((e) => e.taskId === taskId).map((e) => e.id)
+      if (!confirm(`¿Eliminar "${rowLabel(key)}"? Se van a borrar las horas cargadas esta semana para esta fila.`)) return
+      const idsToDelete = entries.filter((e) => e.projectId === projectId && e.taskId === taskId).map((e) => e.id)
       await Promise.all(idsToDelete.map((id) => fetch(`/api/me/time-entries?id=${id}`, { method: 'DELETE' })))
       await qc.invalidateQueries({ queryKey: ['me-time-entries', weekStart] })
     }
-    setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId))
+    setSelectedRowKeys((prev) => prev.filter((k) => k !== key))
   }
 
-  async function saveCell(taskId: number, day: string, hours: number) {
-    const task = taskById.get(taskId)
-    if (!task) return
+  async function saveCell(projectId: number, taskId: number | null, day: string, hours: number) {
     await fetch('/api/me/time-entries', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: task.projectId, taskId, date: `${day}T12:00:00.000Z`, hours }),
+      body: JSON.stringify({ projectId, taskId, date: `${day}T12:00:00.000Z`, hours }),
     })
     await qc.invalidateQueries({ queryKey: ['me-time-entries', weekStart] })
     setRefreshKey((k) => k + 1)
@@ -326,6 +370,41 @@ export default function MisHorasPage() {
             )}
           </div>
 
+          {/* Summary cards — same visual language as Mi Reporte/Dashboard.
+              Gives the page real content so the table doesn't feel like it's
+              floating in a mostly-empty card on wide screens. */}
+          {!entriesError && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
+                  <Clock size={17} style={{ color: '#0170B9' }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold text-[#3a3a3a] truncate">{formatHours(weekTotal)}</p>
+                  <p className="text-xs text-gray-500 truncate">Horas semana</p>
+                </div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
+                  <FolderKanban size={17} style={{ color: '#0170B9' }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold text-[#3a3a3a] truncate">{weekProjectCount}</p>
+                  <p className="text-xs text-gray-500 truncate">Proyectos</p>
+                </div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
+                  <ListChecks size={17} style={{ color: '#0170B9' }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-lg font-bold text-[#3a3a3a] truncate">{weekTaskCount}</p>
+                  <p className="text-xs text-gray-500 truncate">Tareas cargadas</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Day picker — mobile only. Desktop shows every day at once as
               grid columns, so this selector has nothing to do there. */}
           {isMobile && (
@@ -359,22 +438,23 @@ export default function MisHorasPage() {
                   single hour input each, instead of the 7-column grid, so
                   there's no horizontal scrolling and tap targets stay full-width. */}
               <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
-                {isFetching && rowTaskIds.length === 0 && (
+                {isFetching && rowKeys.length === 0 && (
                   <div className="text-center text-gray-400 text-sm py-6">Cargando...</div>
                 )}
-                {!isFetching && rowTaskIds.length === 0 && (
+                {!isFetching && rowKeys.length === 0 && (
                   <div className="text-center text-gray-400 text-sm py-6">Todavía no agregaste tareas esta semana.</div>
                 )}
-                {rowTaskIds.map((taskId) => {
-                  const row = grid.get(taskId) ?? {}
+                {rowKeys.map((key) => {
+                  const { projectId, taskId } = parseRowKey(key)
+                  const row = grid.get(key) ?? {}
                   const selectedDay = days[selectedDayIndex]
                   return (
-                    <div key={taskId} className="flex items-center gap-3 px-4 py-3">
+                    <div key={key} className="flex items-center gap-3 px-4 py-3">
                       <span style={{
                         display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                        backgroundColor: rowColor(taskId), flexShrink: 0,
+                        backgroundColor: rowColor(key), flexShrink: 0,
                       }} />
-                      <span className="flex-1 min-w-0 truncate text-sm">{rowLabel(taskId)}</span>
+                      <span className="flex-1 min-w-0 truncate text-sm">{rowLabel(key)}</span>
                       <input
                         type="number"
                         step="0.25"
@@ -383,14 +463,14 @@ export default function MisHorasPage() {
                         onBlur={(e) => {
                           const val = e.target.value === '' ? 0 : Number(e.target.value)
                           if (val === (row[selectedDay] ?? 0)) return
-                          saveCell(taskId, selectedDay, val)
+                          saveCell(projectId, taskId, selectedDay, val)
                         }}
-                        key={`${taskId}-${selectedDay}-${refreshKey}`}
+                        key={`${key}-${selectedDay}-${refreshKey}`}
                         style={{ fontSize: 16 }}
                         className="w-20 border border-gray-300 rounded px-2 py-2 text-center focus:bg-blue-50 focus:outline-none focus:border-[#0170B9]"
                       />
                       <button
-                        onClick={() => removeRow(taskId)}
+                        onClick={() => removeRow(key)}
                         className="text-red-400 hover:text-red-600 transition-colors p-1"
                         title="Eliminar fila"
                       >
@@ -399,11 +479,11 @@ export default function MisHorasPage() {
                     </div>
                   )
                 })}
-                {rowTaskIds.length > 0 && (
+                {rowKeys.length > 0 && (
                   <div className="flex items-center justify-between px-4 py-3 bg-gray-50 font-semibold text-sm">
                     <span className="text-gray-600">Total del día</span>
                     <span className="text-[#0170B9]">
-                      {formatHours(rowTaskIds.reduce((s, id) => s + ((grid.get(id) ?? {})[days[selectedDayIndex]] ?? 0), 0))} hs
+                      {formatHours(rowKeys.reduce((s, k) => s + ((grid.get(k) ?? {})[days[selectedDayIndex]] ?? 0), 0))} hs
                     </span>
                   </div>
                 )}
@@ -418,7 +498,7 @@ export default function MisHorasPage() {
                 </div>
                 <SearchableSelect
                   value={pickerProjectId}
-                  onChange={(v) => { setPickerProjectId(v); setPickerTaskId('') }}
+                  onChange={(v) => { setPickerProjectId(v); setPickerTaskId(''); setNewTaskName('') }}
                   options={projectOptions}
                   placeholder="Proyecto..."
                   className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
@@ -431,13 +511,34 @@ export default function MisHorasPage() {
                   className="w-full border border-gray-300 rounded px-3 py-2 text-sm disabled:bg-gray-100"
                 >
                   <option value="">Tarea...</option>
+                  {!pickerNoTaskAlreadyAdded && <option value="__none__">Sin tarea (Time & Material)</option>}
                   {pickerTaskOptions.map((t) => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
+                  <option value="__new__">+ Crear tarea nueva...</option>
                 </select>
+                {pickerTaskId === '__new__' && (
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      value={newTaskName}
+                      onChange={(e) => setNewTaskName(e.target.value)}
+                      placeholder="Nombre de la tarea"
+                      style={{ fontSize: 16 }}
+                      className="flex-1 min-w-0 border border-gray-300 rounded px-3 py-2 text-sm"
+                    />
+                    <button
+                      onClick={createTask}
+                      disabled={!newTaskName.trim() || creatingTask}
+                      className="text-sm bg-[#0170B9] text-white rounded px-3 disabled:opacity-40 shrink-0"
+                    >
+                      {creatingTask ? '...' : 'Crear'}
+                    </button>
+                  </div>
+                )}
                 <button
                   onClick={addRow}
-                  disabled={!pickerTaskId}
+                  disabled={!pickerTaskId || pickerTaskId === '__new__'}
                   className="w-full bg-[#0170B9] text-white rounded py-2 text-sm font-medium disabled:opacity-40"
                 >
                   Agregar
@@ -448,7 +549,7 @@ export default function MisHorasPage() {
               </div>
             </>
           ) : (
-            <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+            <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto w-full">
               <table className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
@@ -488,18 +589,19 @@ export default function MisHorasPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {isFetching && rowTaskIds.length === 0 && (
+                  {isFetching && rowKeys.length === 0 && (
                     <tr>
                       <td colSpan={10} style={{ textAlign: 'center', padding: '24px', color: '#9ca3af' }}>
                         Cargando...
                       </td>
                     </tr>
                   )}
-                  {rowTaskIds.map((taskId) => {
-                    const row = grid.get(taskId) ?? {}
+                  {rowKeys.map((key) => {
+                    const { projectId, taskId } = parseRowKey(key)
+                    const row = grid.get(key) ?? {}
                     const rowTotal = days.reduce((s, d) => s + (row[d] ?? 0), 0)
                     return (
-                      <tr key={taskId} className="hover:bg-blue-50">
+                      <tr key={key} className="hover:bg-blue-50">
                         <td style={{
                           position: 'sticky', left: 0, zIndex: 5,
                           backgroundColor: 'white',
@@ -510,13 +612,13 @@ export default function MisHorasPage() {
                           <div className="flex items-center gap-1.5">
                             <span style={{
                               display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-                              backgroundColor: rowColor(taskId), flexShrink: 0,
+                              backgroundColor: rowColor(key), flexShrink: 0,
                             }} />
-                            <span className="truncate">{rowLabel(taskId)}</span>
+                            <span className="truncate">{rowLabel(key)}</span>
                           </div>
                         </td>
                         {days.map((day) => (
-                          <td key={`${taskId}-${day}-${refreshKey}`} style={{
+                          <td key={`${key}-${day}-${refreshKey}`} style={{
                             backgroundColor: isToday(day) ? '#fffbeb' : isWeekendDay(day) ? '#F3F4F6' : 'white',
                             width: CELL_W, minWidth: CELL_W,
                             borderRight: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb',
@@ -530,7 +632,7 @@ export default function MisHorasPage() {
                               onBlur={(e) => {
                                 const val = e.target.value === '' ? 0 : Number(e.target.value)
                                 if (val === (row[day] ?? 0)) return
-                                saveCell(taskId, day, val)
+                                saveCell(projectId, taskId, day, val)
                               }}
                               style={{ fontSize: inputFontSize }}
                               className="w-full text-center border-0 bg-transparent focus:bg-blue-50 focus:outline-none rounded py-1"
@@ -548,7 +650,7 @@ export default function MisHorasPage() {
                         </td>
                         <td style={{ width: 28, minWidth: 28, textAlign: 'center', borderBottom: '1px solid #e5e7eb' }}>
                           <button
-                            onClick={() => removeRow(taskId)}
+                            onClick={() => removeRow(key)}
                             className="text-red-400 hover:text-red-600 transition-colors"
                             title="Eliminar fila"
                           >
@@ -575,7 +677,7 @@ export default function MisHorasPage() {
                       <div className="flex flex-col gap-1">
                         <SearchableSelect
                           value={pickerProjectId}
-                          onChange={(v) => { setPickerProjectId(v); setPickerTaskId('') }}
+                          onChange={(v) => { setPickerProjectId(v); setPickerTaskId(''); setNewTaskName('') }}
                           options={projectOptions}
                           placeholder="Proyecto..."
                           className="border border-gray-300 rounded px-1.5 py-1 text-xs w-full"
@@ -588,18 +690,38 @@ export default function MisHorasPage() {
                             className="border border-gray-300 rounded px-1.5 py-1 text-xs flex-1 min-w-0 disabled:bg-gray-100"
                           >
                             <option value="">Tarea...</option>
+                            {!pickerNoTaskAlreadyAdded && <option value="__none__">Sin tarea (Time & Material)</option>}
                             {pickerTaskOptions.map((t) => (
                               <option key={t.id} value={t.id}>{t.name}</option>
                             ))}
+                            <option value="__new__">+ Crear tarea nueva...</option>
                           </select>
                           <button
                             onClick={addRow}
-                            disabled={!pickerTaskId}
+                            disabled={!pickerTaskId || pickerTaskId === '__new__'}
                             className="text-xs bg-[#0170B9] text-white rounded px-2 disabled:opacity-40 shrink-0"
                           >
                             +
                           </button>
                         </div>
+                        {pickerTaskId === '__new__' && (
+                          <div className="flex gap-1">
+                            <input
+                              type="text"
+                              value={newTaskName}
+                              onChange={(e) => setNewTaskName(e.target.value)}
+                              placeholder="Nombre de la tarea"
+                              className="border border-gray-300 rounded px-1.5 py-1 text-xs flex-1 min-w-0"
+                            />
+                            <button
+                              onClick={createTask}
+                              disabled={!newTaskName.trim() || creatingTask}
+                              className="text-xs bg-[#0170B9] text-white rounded px-2 disabled:opacity-40 shrink-0"
+                            >
+                              {creatingTask ? '...' : 'Crear'}
+                            </button>
+                          </div>
+                        )}
                         {pickerProjectId && pickerTaskOptions.length === 0 && (
                           <span className="text-[10px] text-gray-400">Sin tareas disponibles en este proyecto.</span>
                         )}
@@ -608,7 +730,7 @@ export default function MisHorasPage() {
                     <td colSpan={days.length + 2} style={{ backgroundColor: '#fafafa', borderBottom: '1px solid #e5e7eb' }} />
                   </tr>
                 </tbody>
-                {rowTaskIds.length > 0 && (
+                {rowKeys.length > 0 && (
                   <tfoot>
                     <tr>
                       <td style={{
@@ -621,7 +743,7 @@ export default function MisHorasPage() {
                         Total del día
                       </td>
                       {days.map((day) => {
-                        const dayTotal = rowTaskIds.reduce((s, id) => s + ((grid.get(id) ?? {})[day] ?? 0), 0)
+                        const dayTotal = rowKeys.reduce((s, k) => s + ((grid.get(k) ?? {})[day] ?? 0), 0)
                         return (
                           <td key={day} style={{
                             backgroundColor: isWeekendDay(day) ? '#374151' : '#1e3a5f',
