@@ -690,3 +690,77 @@ Verificacion manual contra DOM real (no solo visual) + `npx tsc --noEmit` + `npx
 5. Boton de borrar fila en Mis Horas mobile mide 44×44px.
 6. `git diff --stat` confirma cero cambios en Gantt, Control de Horas, admin y demas pantallas fuera de alcance (salvo `app/layout.tsx`, `app/globals.css`, `tailwind.config.ts`, la base compartida).
 7. `npx tsc --noEmit`, `npx next lint` y `npm run build` pasan sin errores.
+
+---
+
+# Spec: Auditoría de diseño (skill frontend-design) sobre Mis Horas / Mi Reporte
+
+## Objective
+
+Auditar `/mis-horas` y `/mi-reporte` con la lente del skill `frontend-design` (disciplina de tipografía/color, restricción, estructura como información, piso de accesibilidad, calidad del copy) para encontrar mejoras puntuales aún abiertas — **no** un rediseño. El spec anterior ("UI/UX polish") ya cubrió tipografía (Plus Jakarta Sans), paleta de marca (`primary`/`primary-dark`/`primary-light`), `StatCard`/`EmptyState`/`Skeleton`, `tabular-nums` y tap targets de 44×44px en ambas pantallas — nada de eso se repite acá.
+
+El enfoque "hero de marketing / riesgo estético" del skill no aplica: esto es una herramienta interna de carga de horas con identidad de marca ya establecida, no una landing. Lo que sí aplica y sigue abierto: dos bugs reales de contraste WCAG, nombres accesibles incompletos en botones de ícono, y `prefers-reduced-motion` no manejado en ningún lugar del proyecto.
+
+**Éxito** = los dos bugs de contraste están corregidos y verificados por cálculo, los botones de ícono tienen nombre accesible robusto (no solo `title`), las animaciones (`Skeleton`) respetan `prefers-reduced-motion`, y los valores de color duplicados que causaban el bug de contraste quedan en un solo lugar en vez de repetidos en 2 archivos — sin tocar lógica de datos, sin agregar librerías, sin salir de estas 2 pantallas (salvo el componente compartido `Skeleton.tsx`, ya tocado por el spec anterior).
+
+## Hallazgos clave de la auditoría
+
+1. **Bug de contraste WCAG AA en encabezados de columna "hoy" y "fin de semana"** (`app/mis-horas/page.tsx:548`, `app/mi-reporte/page.tsx:261`, y sus footers de total en `:730`/`:354`): texto blanco bold 11px sobre `#f59e0b` (columna "hoy") da un contraste de **~2.1:1**, y sobre `#7a9cbf` (columnas de fin de semana) da **~2.9:1** — ambos muy por debajo del mínimo 4.5:1 que exige WCAG AA para texto normal (11px bold no califica como "texto grande", que requeriría solo 3:1). Es el único hallazgo de accesibilidad con severidad real encontrado en estas 2 pantallas.
+2. **Botones de ícono sin nombre accesible robusto**: el botón de borrar fila (`Trash2`) en ambas pantallas y los botones "←"/"→" de navegación de semana en Mis Horas solo tienen `title`, que varios lectores de pantalla no anuncian de forma confiable y que no aparece hasta el hover (no ayuda a navegación por teclado). Falta `aria-label`.
+3. **`prefers-reduced-motion` no está manejado en ningún lugar del proyecto** (confirmado: cero ocurrencias en `globals.css` y en toda la base). Afecta en particular `Skeleton.tsx` (`animate-pulse`), usado en ambas pantallas durante la carga.
+4. **Los mismos 6 valores hex del hallazgo 1** (`#0170B9`, `#005a94`, `#f59e0b`, `#7a9cbf`, `#1e3a5f`, `#374151`) están **duplicados literalmente** en los `style={{}}` de `mis-horas/page.tsx` y `mi-reporte/page.tsx` — la corrección del bug de contraste tendría que aplicarse dos veces, en dos archivos, si se hace a mano. El spec anterior dejó explícitamente esta zona ("estilos condicionales de las celdas pivot") fuera de alcance por no haber una razón concreta para tocarla — ahora sí la hay: el bug de contraste.
+5. El resto de la auditoría (jerarquía tipográfica, copy de `EmptyState`/errores, estructura de las tablas, foco visible en inputs y en `SearchableSelect`) está en buen estado y no requiere cambios: los mensajes de vacío/error ya son específicos y accionables ("Elegí un proyecto para cargar horas en bloque.", "Todavía no agregaste tareas esta semana."), los inputs de hora mantienen un indicador de foco visible (cambio de fondo/borde), y ninguna página reemplaza el outline nativo de botones sin sustituto.
+6. `SearchableSelect` (usado en 9 combos de 4 pantallas, no solo estas 2) no expone roles ARIA de combobox/listbox — es un hallazgo real pero de alcance mayor al confirmado con el usuario para este spec (tocaría `admin/hours` y `admin/daily-report` también). Se documenta como hallazgo pero **no se implementa acá** (ver Open Questions).
+
+## Decisiones confirmadas
+
+1. **Fix de contraste**: oscurecer los dos colores de acento usados como fondo de header/footer con texto blanco encima — `#f59e0b` → `#b45309` (contraste >4.5:1 con blanco) y `#7a9cbf` → `#3d5a80` (contraste >4.5:1 con blanco) — sin cambiar el resto de la paleta ni el significado visual (sigue siendo "más oscuro/saturado = hoy o fin de semana").
+2. **Extraer los 6 valores de color compartidos** a un módulo nuevo `lib/pivot-colors.ts` (constantes simples, no un sistema de theming nuevo), importado por ambos archivos — alcance acotado a los colores del hallazgo 1, no se tocan otros estilos inline de las tablas.
+3. **`aria-label`** en los botones `Trash2` ("Eliminar fila") y en los botones de navegación de semana de Mis Horas ("Semana anterior" / "Semana siguiente"), manteniendo el `title` existente como tooltip visual.
+4. **`prefers-reduced-motion`**: en `globals.css`, una regla que neutralice `animate-pulse` bajo `@media (prefers-reduced-motion: reduce)` — cambio global de una sola regla, beneficia a `Skeleton` en toda la app (no solo estas 2 pantallas) sin tocar ningún componente.
+5. **No se toca `SearchableSelect`** (hallazgo 6) ni ninguna otra pantalla — ver Open Questions.
+
+## Tech Stack
+
+Sin cambios, sin librerías nuevas.
+
+## Project Structure
+
+```
+lib/pivot-colors.ts       -> NUEVO: constantes de color compartidas (hoy/fin de semana/header/footer)
+app/mis-horas/page.tsx    -> usa lib/pivot-colors.ts; aria-label en Trash2 (mobile y desktop) y en ← →
+app/mi-reporte/page.tsx   -> usa lib/pivot-colors.ts (es de solo lectura, no tiene Trash2 ni ← →)
+app/globals.css           -> regla prefers-reduced-motion para .animate-pulse
+```
+
+## Code Style
+
+`lib/pivot-colors.ts` exporta constantes simples (`export const PIVOT_COLORS = { header: '#0170B9', headerToday: '#b45309', headerWeekend: '#3d5a80', ... }`), sin funciones ni clases — mismo nivel de abstracción que las constantes `CELL_W`/`NAME_W`/`TOTAL_W` que ya usa cada página. Los `style={{}}` siguen igual, solo referencian la constante en vez del hex literal.
+
+## Testing Strategy
+
+Sin suite automatizada — patrón ya usado en el repo: `npx tsc --noEmit` + `npm run build` + verificación manual. Para este spec en particular:
+- Calcular contraste de los 2 colores corregidos contra blanco (>4.5:1) y confirmar visualmente que "hoy"/"fin de semana" siguen siendo distinguibles del header normal.
+- Confirmar con el inspector de accesibilidad del navegador (o lector de pantalla) que los botones de ícono anuncian su nombre.
+- Con "Reducir movimiento" activado en el SO, confirmar que el `Skeleton` ya no pulsa.
+- `git diff --stat` confirma cero cambios fuera de los 4 archivos listados.
+
+## Boundaries
+
+- **Always**: mantener el significado visual actual (hoy = acento cálido, fin de semana = acento frío/apagado, ambos más oscuros que antes solo para pasar contraste); no tocar lógica de datos ni queries.
+- **Ask first**: extender el fix de ARIA/contraste a otras pantallas que comparten componentes (`Skeleton` ya se resuelve acá por ser una sola regla global; `SearchableSelect` no).
+- **Never**: tocar Gantt, Control de Horas, `/admin/*`, `/projects`, `/holidays`, `/resources`; agregar librerías nuevas; reemplazar la paleta de marca; tocar `SearchableSelect.tsx` (hallazgo 6, fuera de alcance de este spec).
+
+## Success Criteria
+
+1. Texto blanco sobre header/footer "hoy" y "fin de semana" en ambas tablas pivot pasa 4.5:1 de contraste (verificado por cálculo).
+2. Botón de borrar fila (Mis Horas, mobile y desktop) y botones de navegación de semana tienen `aria-label` descriptivo.
+3. Con `prefers-reduced-motion: reduce` activo, `Skeleton` no anima.
+4. Los 6 valores de color duplicados viven en un solo archivo (`lib/pivot-colors.ts`), usado por ambas páginas.
+5. Sin cambios visuales no intencionados: capturas antes/después de ambas tablas confirman que solo cambiaron los 2 tonos de acento corregidos.
+6. `git diff --stat` confirma cero cambios en Gantt, Control de Horas, `/admin/*`, `/projects`, `/holidays`, `/resources`, `SearchableSelect.tsx`.
+7. `npx tsc --noEmit` y `npm run build` pasan sin errores.
+
+## Open Questions
+
+- El hallazgo 6 (`SearchableSelect` sin roles ARIA de combobox) queda documentado pero fuera de este spec porque afecta 4 pantallas, no 2 — si se quiere resolver, amerita su propio spec acotado a ese componente.

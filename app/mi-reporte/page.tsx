@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Clock, TrendingUp, FolderKanban, CalendarDays } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
+import { PIVOT_COLORS } from '@/lib/pivot-colors'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import StatCard from '@/components/ui/StatCard'
 import EmptyState from '@/components/ui/EmptyState'
@@ -249,26 +250,26 @@ export default function MiReportePage() {
             <tr style={{ position: 'sticky', top: 0, zIndex: 15 }}>
               <th style={{
                 position: 'sticky', left: 0, zIndex: 20,
-                backgroundColor: '#0170B9', color: 'white',
+                backgroundColor: PIVOT_COLORS.header, color: 'white',
                 width: NAME_W, minWidth: NAME_W, textAlign: 'left',
                 padding: '6px 10px', fontSize: 12, fontWeight: 'bold',
-                borderRight: '2px solid #005a94',
+                borderRight: `2px solid ${PIVOT_COLORS.headerBorder}`,
               }}>
                 Proyecto
               </th>
               {days.map((day) => (
                 <th key={day} style={{
-                  backgroundColor: isToday(day) ? '#f59e0b' : isWeekend(day) ? '#7a9cbf' : '#0170B9',
+                  backgroundColor: isToday(day) ? PIVOT_COLORS.headerToday : isWeekend(day) ? PIVOT_COLORS.headerWeekend : PIVOT_COLORS.header,
                   color: 'white', width: CELL_W, minWidth: CELL_W,
                   textAlign: 'center', fontSize: 11, fontWeight: 'bold',
-                  padding: '6px 0', borderRight: '1px solid #005a94',
+                  padding: '6px 0', borderRight: `1px solid ${PIVOT_COLORS.headerBorder}`,
                 }}>
                   {day.substring(8)}
                 </th>
               ))}
               <th style={{
                 position: 'sticky', right: 0, zIndex: 20,
-                backgroundColor: '#005a94', color: 'white',
+                backgroundColor: PIVOT_COLORS.headerBorder, color: 'white',
                 width: TOTAL_W, minWidth: TOTAL_W, textAlign: 'right',
                 padding: '6px 8px', fontSize: 12, fontWeight: 'bold',
                 borderLeft: '2px solid #004f85',
@@ -340,9 +341,9 @@ export default function MiReportePage() {
               <tr style={{ position: 'sticky', bottom: 0, zIndex: 15 }}>
                 <td style={{
                   position: 'sticky', left: 0, zIndex: 20,
-                  backgroundColor: '#1e3a5f', color: 'white',
+                  backgroundColor: PIVOT_COLORS.footer, color: 'white',
                   padding: '5px 10px', fontWeight: 'bold', fontSize: 12,
-                  borderTop: '2px solid #005a94', borderRight: '2px solid #005a94',
+                  borderTop: `2px solid ${PIVOT_COLORS.headerBorder}`, borderRight: `2px solid ${PIVOT_COLORS.headerBorder}`,
                   width: NAME_W, minWidth: NAME_W,
                 }}>
                   TOTAL GENERAL
@@ -351,10 +352,10 @@ export default function MiReportePage() {
                   const dayTotal = projectRows.reduce((s, p) => s + (p.dailyHours[day] ?? 0) + (p.dailyExtraHours[day] ?? 0), 0)
                   return (
                     <td key={day} style={{
-                      backgroundColor: isWeekend(day) ? '#374151' : '#1e3a5f',
+                      backgroundColor: isWeekend(day) ? PIVOT_COLORS.footerWeekend : PIVOT_COLORS.footer,
                       color: 'white', fontWeight: 'bold', fontSize: 11,
                       textAlign: 'center', padding: 0,
-                      borderTop: '2px solid #005a94', borderRight: '1px solid #2d4a7a',
+                      borderTop: `2px solid ${PIVOT_COLORS.headerBorder}`, borderRight: '1px solid #2d4a7a',
                       width: CELL_W, minWidth: CELL_W,
                     }}>
                       {dayTotal > 0 ? formatHours(dayTotal) : ''}
@@ -363,10 +364,10 @@ export default function MiReportePage() {
                 })}
                 <td style={{
                   position: 'sticky', right: 0, zIndex: 20,
-                  backgroundColor: '#005a94', color: 'white',
+                  backgroundColor: PIVOT_COLORS.headerBorder, color: 'white',
                   textAlign: 'right', padding: '5px 8px',
                   fontWeight: 'bold', fontSize: 13,
-                  borderTop: '2px solid #005a94', borderLeft: '2px solid #004f85',
+                  borderTop: `2px solid ${PIVOT_COLORS.headerBorder}`, borderLeft: '2px solid #004f85',
                   width: TOTAL_W, minWidth: TOTAL_W,
                 }}>
                   {formatHours(grandTotal)}

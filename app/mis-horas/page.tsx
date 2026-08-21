@@ -6,6 +6,7 @@ import { startOfWeek, addDays, addWeeks, format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Plus, Trash2, Clock, FolderKanban, ListChecks, CalendarClock } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
+import { PIVOT_COLORS } from '@/lib/pivot-colors'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import StatCard from '@/components/ui/StatCard'
 import EmptyState from '@/components/ui/EmptyState'
@@ -355,6 +356,7 @@ export default function MisHorasPage() {
           <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 flex flex-wrap items-center gap-2 sm:gap-3">
             <button
               onClick={() => setWeekStart((w) => isoDay(addWeeks(parseISO(w), -1)))}
+              aria-label="Semana anterior"
               className="border border-gray-300 rounded px-2 py-1.5 text-sm hover:bg-gray-50"
             >
               ←
@@ -364,6 +366,7 @@ export default function MisHorasPage() {
             </span>
             <button
               onClick={() => setWeekStart((w) => isoDay(addWeeks(parseISO(w), 1)))}
+              aria-label="Semana siguiente"
               className="border border-gray-300 rounded px-2 py-1.5 text-sm hover:bg-gray-50"
             >
               →
@@ -452,6 +455,7 @@ export default function MisHorasPage() {
                       />
                       <button
                         onClick={() => removeRow(key)}
+                        aria-label="Eliminar fila"
                         className="min-w-[44px] min-h-[44px] flex items-center justify-center text-red-400 hover:text-red-600 transition-colors shrink-0"
                         title="Eliminar fila"
                       >
@@ -536,26 +540,26 @@ export default function MisHorasPage() {
                   <tr>
                     <th style={{
                       position: 'sticky', left: 0, zIndex: 10,
-                      backgroundColor: '#0170B9', color: 'white',
+                      backgroundColor: PIVOT_COLORS.header, color: 'white',
                       width: NAME_W, minWidth: NAME_W, textAlign: 'left',
                       padding: '8px 10px', fontSize: 12, fontWeight: 'bold',
-                      borderRight: '2px solid #005a94',
+                      borderRight: `2px solid ${PIVOT_COLORS.headerBorder}`,
                     }}>
                       Proyectos
                     </th>
                     {days.map((day, i) => (
                       <th key={day} style={{
-                        backgroundColor: isToday(day) ? '#f59e0b' : isWeekendDay(day) ? '#7a9cbf' : '#0170B9',
+                        backgroundColor: isToday(day) ? PIVOT_COLORS.headerToday : isWeekendDay(day) ? PIVOT_COLORS.headerWeekend : PIVOT_COLORS.header,
                         color: 'white', width: CELL_W, minWidth: CELL_W,
                         textAlign: 'center', fontSize: 11, fontWeight: 'bold',
-                        padding: '8px 4px', borderRight: '1px solid #005a94',
+                        padding: '8px 4px', borderRight: `1px solid ${PIVOT_COLORS.headerBorder}`,
                       }}>
                         <div>{DAY_LABELS[i]}</div>
                         <div style={{ fontWeight: 'normal', opacity: 0.85 }}>{day.substring(8)}</div>
                       </th>
                     ))}
                     <th style={{
-                      backgroundColor: '#005a94', color: 'white',
+                      backgroundColor: PIVOT_COLORS.headerBorder, color: 'white',
                       width: TOTAL_W, minWidth: TOTAL_W, textAlign: 'right',
                       padding: '8px 10px', fontSize: 12, fontWeight: 'bold',
                       borderLeft: '2px solid #004f85',
@@ -566,7 +570,7 @@ export default function MisHorasPage() {
                         table-layout: fixed sizes columns off this header row,
                         so without this cell that column renders outside the
                         table's own computed width. */}
-                    <th style={{ backgroundColor: '#005a94', width: 28, minWidth: 28 }} />
+                    <th style={{ backgroundColor: PIVOT_COLORS.headerBorder, width: 28, minWidth: 28 }} />
                   </tr>
                 </thead>
                 <tbody>
@@ -632,6 +636,7 @@ export default function MisHorasPage() {
                         <td style={{ width: 28, minWidth: 28, textAlign: 'center', borderBottom: '1px solid #e5e7eb' }}>
                           <button
                             onClick={() => removeRow(key)}
+                            aria-label="Eliminar fila"
                             className="text-red-400 hover:text-red-600 transition-colors"
                             title="Eliminar fila"
                           >
@@ -716,9 +721,9 @@ export default function MisHorasPage() {
                     <tr>
                       <td style={{
                         position: 'sticky', left: 0, zIndex: 5,
-                        backgroundColor: '#1e3a5f', color: 'white',
+                        backgroundColor: PIVOT_COLORS.footer, color: 'white',
                         padding: '6px 10px', fontWeight: 'bold', fontSize: 12,
-                        borderTop: '2px solid #005a94',
+                        borderTop: `2px solid ${PIVOT_COLORS.headerBorder}`,
                         width: NAME_W, minWidth: NAME_W,
                       }}>
                         Total del día
@@ -727,10 +732,10 @@ export default function MisHorasPage() {
                         const dayTotal = rowKeys.reduce((s, k) => s + ((grid.get(k) ?? {})[day] ?? 0), 0)
                         return (
                           <td key={day} style={{
-                            backgroundColor: isWeekendDay(day) ? '#374151' : '#1e3a5f',
+                            backgroundColor: isWeekendDay(day) ? PIVOT_COLORS.footerWeekend : PIVOT_COLORS.footer,
                             color: 'white', fontWeight: 'bold', fontSize: 11,
                             textAlign: 'center', padding: '6px 0',
-                            borderTop: '2px solid #005a94',
+                            borderTop: `2px solid ${PIVOT_COLORS.headerBorder}`,
                             width: CELL_W, minWidth: CELL_W,
                           }}>
                             {dayTotal > 0 ? formatHours(dayTotal) : ''}
@@ -738,10 +743,10 @@ export default function MisHorasPage() {
                         )
                       })}
                       <td colSpan={2} style={{
-                        backgroundColor: '#005a94', color: 'white',
+                        backgroundColor: PIVOT_COLORS.headerBorder, color: 'white',
                         textAlign: 'right', padding: '6px 10px',
                         fontWeight: 'bold', fontSize: 13,
-                        borderTop: '2px solid #005a94',
+                        borderTop: `2px solid ${PIVOT_COLORS.headerBorder}`,
                         width: TOTAL_W + 28, minWidth: TOTAL_W + 28,
                       }}>
                         {formatHours(weekTotal)}
