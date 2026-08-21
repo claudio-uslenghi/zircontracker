@@ -7,6 +7,7 @@
   --foreground: #3a3a3a;
   --zircon-blue: #0170B9;
   --zircon-blue-dark: #005a94;
+  --zircon-blue-light: #E6F2FA;
   --zircon-text: #4B4F58;
   --zircon-border: #E5E5E5;
 }
@@ -14,8 +15,8 @@
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
-  font-size: 15px;
+  /* font-family comes from Tailwind's font-sans (next/font Plus Jakarta Sans) */
+  font-size: 16px;
   line-height: 1.65;
 }
 
