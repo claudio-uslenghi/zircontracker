@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfWeek, addDays, addWeeks, format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { Plus, Trash2, Clock, FolderKanban, ListChecks } from 'lucide-react'
+import { Plus, Trash2, Clock, FolderKanban, ListChecks, CalendarClock } from 'lucide-react'
 import { useIsMobile } from '@/lib/use-is-mobile'
 import SearchableSelect from '@/components/ui/SearchableSelect'
+import StatCard from '@/components/ui/StatCard'
+import EmptyState from '@/components/ui/EmptyState'
+import { SkeletonRow } from '@/components/ui/Skeleton'
 import type { Task, TimeEntry, Project } from '@/types'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -331,7 +334,7 @@ export default function MisHorasPage() {
         <button
           onClick={() => setMode('detailed')}
           className={`px-3 sm:px-4 py-1.5 rounded text-sm font-medium transition-colors ${
-            mode === 'detailed' ? 'bg-[#0170B9] text-white' : 'text-gray-500 hover:text-gray-700'
+            mode === 'detailed' ? 'bg-primary text-white' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
           Detallado
@@ -339,7 +342,7 @@ export default function MisHorasPage() {
         <button
           onClick={() => setMode('tm')}
           className={`px-3 sm:px-4 py-1.5 rounded text-sm font-medium transition-colors ${
-            mode === 'tm' ? 'bg-[#0170B9] text-white' : 'text-gray-500 hover:text-gray-700'
+            mode === 'tm' ? 'bg-primary text-white' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
           Time &amp; Material
@@ -366,7 +369,7 @@ export default function MisHorasPage() {
               →
             </button>
             {weekTotal > 0 && (
-              <span className="ml-auto font-semibold text-[#0170B9] text-sm">Total: {formatHours(weekTotal)} hs</span>
+              <span className="ml-auto font-semibold text-primary text-sm tabular-nums">Total: {formatHours(weekTotal)} hs</span>
             )}
           </div>
 
@@ -375,33 +378,9 @@ export default function MisHorasPage() {
               floating in a mostly-empty card on wide screens. */}
           {!entriesError && (
             <div className="grid grid-cols-3 gap-3">
-              <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
-                  <Clock size={17} style={{ color: '#0170B9' }} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-lg font-bold text-[#3a3a3a] truncate">{formatHours(weekTotal)}</p>
-                  <p className="text-xs text-gray-500 truncate">Horas semana</p>
-                </div>
-              </div>
-              <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
-                  <FolderKanban size={17} style={{ color: '#0170B9' }} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-lg font-bold text-[#3a3a3a] truncate">{weekProjectCount}</p>
-                  <p className="text-xs text-gray-500 truncate">Proyectos</p>
-                </div>
-              </div>
-              <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
-                  <ListChecks size={17} style={{ color: '#0170B9' }} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-lg font-bold text-[#3a3a3a] truncate">{weekTaskCount}</p>
-                  <p className="text-xs text-gray-500 truncate">Tareas cargadas</p>
-                </div>
-              </div>
+              <StatCard icon={Clock} value={formatHours(weekTotal)} label="Horas semana" />
+              <StatCard icon={FolderKanban} value={weekProjectCount} label="Proyectos" />
+              <StatCard icon={ListChecks} value={weekTaskCount} label="Tareas cargadas" />
             </div>
           )}
 
@@ -415,7 +394,7 @@ export default function MisHorasPage() {
                   onClick={() => setSelectedDayIndex(i)}
                   className={`flex flex-col items-center justify-center rounded-lg py-2 text-xs font-medium transition-colors ${
                     i === selectedDayIndex
-                      ? 'bg-[#0170B9] text-white'
+                      ? 'bg-primary text-white'
                       : isToday(day)
                       ? 'bg-amber-50 text-amber-700 border border-amber-300'
                       : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
@@ -439,10 +418,12 @@ export default function MisHorasPage() {
                   there's no horizontal scrolling and tap targets stay full-width. */}
               <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
                 {isFetching && rowKeys.length === 0 && (
-                  <div className="text-center text-gray-400 text-sm py-6">Cargando...</div>
+                  <>
+                    <SkeletonRow /><SkeletonRow /><SkeletonRow />
+                  </>
                 )}
                 {!isFetching && rowKeys.length === 0 && (
-                  <div className="text-center text-gray-400 text-sm py-6">Todavía no agregaste tareas esta semana.</div>
+                  <EmptyState icon={ListChecks} message="Todavía no agregaste tareas esta semana." />
                 )}
                 {rowKeys.map((key) => {
                   const { projectId, taskId } = parseRowKey(key)
@@ -467,11 +448,11 @@ export default function MisHorasPage() {
                         }}
                         key={`${key}-${selectedDay}-${refreshKey}`}
                         style={{ fontSize: 16 }}
-                        className="w-20 border border-gray-300 rounded px-2 py-2 text-center focus:bg-blue-50 focus:outline-none focus:border-[#0170B9]"
+                        className="w-20 border border-gray-300 rounded px-2 py-2 text-center tabular-nums focus:bg-blue-50 focus:outline-none focus:border-primary"
                       />
                       <button
                         onClick={() => removeRow(key)}
-                        className="text-red-400 hover:text-red-600 transition-colors p-1"
+                        className="min-w-[44px] min-h-[44px] flex items-center justify-center text-red-400 hover:text-red-600 transition-colors shrink-0"
                         title="Eliminar fila"
                       >
                         <Trash2 size={16} />
@@ -482,7 +463,7 @@ export default function MisHorasPage() {
                 {rowKeys.length > 0 && (
                   <div className="flex items-center justify-between px-4 py-3 bg-gray-50 font-semibold text-sm">
                     <span className="text-gray-600">Total del día</span>
-                    <span className="text-[#0170B9]">
+                    <span className="text-primary tabular-nums">
                       {formatHours(rowKeys.reduce((s, k) => s + ((grid.get(k) ?? {})[days[selectedDayIndex]] ?? 0), 0))} hs
                     </span>
                   </div>
@@ -493,7 +474,7 @@ export default function MisHorasPage() {
                   stacked full-width instead of squeezed into a narrow cell. */}
               <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-2">
                 <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                  <Plus size={13} className="text-[#0170B9] shrink-0" />
+                  <Plus size={13} className="text-primary shrink-0" />
                   Agregar tarea
                 </div>
                 <SearchableSelect
@@ -530,7 +511,7 @@ export default function MisHorasPage() {
                     <button
                       onClick={createTask}
                       disabled={!newTaskName.trim() || creatingTask}
-                      className="text-sm bg-[#0170B9] text-white rounded px-3 disabled:opacity-40 shrink-0"
+                      className="text-sm bg-primary text-white rounded px-3 disabled:opacity-40 shrink-0"
                     >
                       {creatingTask ? '...' : 'Crear'}
                     </button>
@@ -539,7 +520,7 @@ export default function MisHorasPage() {
                 <button
                   onClick={addRow}
                   disabled={!pickerTaskId || pickerTaskId === '__new__'}
-                  className="w-full bg-[#0170B9] text-white rounded py-2 text-sm font-medium disabled:opacity-40"
+                  className="w-full bg-primary text-white rounded py-2 text-sm font-medium disabled:opacity-40"
                 >
                   Agregar
                 </button>
@@ -550,7 +531,7 @@ export default function MisHorasPage() {
             </>
           ) : (
             <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto w-full">
-              <table className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
+              <table className="border-collapse text-sm tabular-nums" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
                     <th style={{
@@ -591,8 +572,8 @@ export default function MisHorasPage() {
                 <tbody>
                   {isFetching && rowKeys.length === 0 && (
                     <tr>
-                      <td colSpan={10} style={{ textAlign: 'center', padding: '24px', color: '#9ca3af' }}>
-                        Cargando...
+                      <td colSpan={10} className="p-0">
+                        <SkeletonRow /><SkeletonRow /><SkeletonRow />
                       </td>
                     </tr>
                   )}
@@ -671,7 +652,7 @@ export default function MisHorasPage() {
                       width: NAME_W, minWidth: NAME_W,
                     }}>
                       <div className="flex items-center gap-1 mb-1">
-                        <Plus size={12} className="text-[#0170B9] shrink-0" />
+                        <Plus size={12} className="text-primary shrink-0" />
                         <span className="text-[11px] text-gray-500">Seleccionar proyecto</span>
                       </div>
                       <div className="flex flex-col gap-1">
@@ -699,7 +680,7 @@ export default function MisHorasPage() {
                           <button
                             onClick={addRow}
                             disabled={!pickerTaskId || pickerTaskId === '__new__'}
-                            className="text-xs bg-[#0170B9] text-white rounded px-2 disabled:opacity-40 shrink-0"
+                            className="text-xs bg-primary text-white rounded px-2 disabled:opacity-40 shrink-0"
                           >
                             +
                           </button>
@@ -716,7 +697,7 @@ export default function MisHorasPage() {
                             <button
                               onClick={createTask}
                               disabled={!newTaskName.trim() || creatingTask}
-                              className="text-xs bg-[#0170B9] text-white rounded px-2 disabled:opacity-40 shrink-0"
+                              className="text-xs bg-primary text-white rounded px-2 disabled:opacity-40 shrink-0"
                             >
                               {creatingTask ? '...' : 'Crear'}
                             </button>
@@ -815,8 +796,8 @@ export default function MisHorasPage() {
           </div>
 
           {!tmProjectId ? (
-            <div className="bg-white rounded-lg border border-gray-200 p-10 text-center text-gray-400 text-sm">
-              Elegí un proyecto para cargar horas en bloque.
+            <div className="bg-white rounded-lg border border-gray-200">
+              <EmptyState icon={CalendarClock} message="Elegí un proyecto para cargar horas en bloque." />
             </div>
           ) : tmEntriesError ? (
             <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-lg p-4 text-sm">
@@ -826,7 +807,7 @@ export default function MisHorasPage() {
             <>
               <div className="flex items-center justify-between text-sm text-gray-500">
                 <span>{tmBusinessDays.length} días hábiles en {format(new Date(tmYear, tmMonth - 1, 1), 'MMMM yyyy', { locale: es })}</span>
-                <span className="font-semibold text-[#0170B9]">Total mes: {formatHours(tmMonthTotal)} hs</span>
+                <span className="font-semibold text-primary tabular-nums">Total mes: {formatHours(tmMonthTotal)} hs</span>
               </div>
 
               <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
@@ -842,7 +823,7 @@ export default function MisHorasPage() {
                         value={tmDayValues[d] ?? ''}
                         onChange={(e) => setTmDayValues((prev) => ({ ...prev, [d]: Number(e.target.value) }))}
                         style={{ fontSize: inputFontSize }}
-                        className="w-24 border border-gray-300 rounded px-2 py-1 text-center"
+                        className="w-24 border border-gray-300 rounded px-2 py-1 text-center tabular-nums"
                       />
                     </div>
                   )
@@ -853,7 +834,7 @@ export default function MisHorasPage() {
                 <button
                   onClick={saveTmMonth}
                   disabled={tmSaving}
-                  className="px-4 py-2 bg-[#0170B9] text-white rounded text-sm hover:bg-[#005a94] disabled:opacity-50"
+                  className="px-4 py-2 bg-primary text-white rounded text-sm hover:bg-primary-dark disabled:opacity-50"
                 >
                   {tmSaving ? 'Guardando...' : 'Guardar mes'}
                 </button>

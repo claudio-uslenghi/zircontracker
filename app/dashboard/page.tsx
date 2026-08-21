@@ -5,6 +5,9 @@ import { useSession } from 'next-auth/react'
 import { Users, FolderKanban, CalendarDays } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
+import StatCard from '@/components/ui/StatCard'
+import EmptyState from '@/components/ui/EmptyState'
+import { SkeletonCard, SkeletonRow } from '@/components/ui/Skeleton'
 
 type DashboardSummary = {
   userCount: number
@@ -29,36 +32,32 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
-            <Users size={20} style={{ color: '#0170B9' }} />
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-[#3a3a3a]">{isLoading ? '…' : data?.userCount ?? 0}</p>
-            <p className="text-sm text-gray-500">Usuarios activos</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: '#E6F2FA' }}>
-            <FolderKanban size={20} style={{ color: '#0170B9' }} />
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-[#3a3a3a]">{isLoading ? '…' : data?.projectCount ?? 0}</p>
-            <p className="text-sm text-gray-500">Proyectos</p>
-          </div>
-        </div>
+        {isLoading ? (
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        ) : (
+          <>
+            <StatCard icon={Users} value={data?.userCount ?? 0} label="Usuarios activos" size="lg" />
+            <StatCard icon={FolderKanban} value={data?.projectCount ?? 0} label="Proyectos" size="lg" />
+          </>
+        )}
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-5">
         <div className="flex items-center gap-2 mb-4">
-          <CalendarDays size={18} style={{ color: '#0170B9' }} />
+          <CalendarDays size={18} className="text-primary" />
           <h2 className="text-sm font-semibold text-gray-700">Próximos feriados</h2>
         </div>
         {isLoading ? (
-          <p className="text-sm text-gray-400">Cargando...</p>
+          <div className="-mx-5">
+            <SkeletonRow />
+            <SkeletonRow />
+            <SkeletonRow />
+          </div>
         ) : !data?.upcomingHolidays?.length ? (
-          <p className="text-sm text-gray-400">No hay feriados próximos cargados.</p>
+          <EmptyState icon={CalendarDays} message="No hay feriados próximos cargados." />
         ) : (
           <ul className="divide-y divide-gray-100">
             {data.upcomingHolidays.map((h) => (

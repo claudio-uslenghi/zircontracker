@@ -617,3 +617,76 @@ Verificacion manual + `npx tsc --noEmit` + `npm run build`. Casos a verificar:
 2. Filas/datos ya existentes de proyectos finalizados se siguen mostrando sin cambios en ambas pantallas.
 3. `git diff --stat` confirma cambios unicamente en `app/mis-horas/page.tsx` y `app/mi-reporte/page.tsx`.
 4. `npx tsc --noEmit` y `npm run build` pasan sin errores.
+
+---
+
+# Spec: Mejoras de diseno UI/UX — Mis Horas, Mi Reporte, Dashboard
+
+## Objective
+
+Revisar y mejorar el diseno visual de las tres pantallas de autoservicio (Mis Horas, Mi Reporte, Dashboard) usando el skill `ui-ux-pro-max`, y aplicar las mejoras encontradas al codigo — no solo dar recomendaciones.
+
+## Hallazgos clave de la exploracion
+
+Consultado el skill (design-system, typography, product, ux, stack nextjs) contra el codigo real:
+
+1. **La app no tenia tipografia propia** — `body` en `globals.css` usaba el stack de fuentes del sistema a 15px. El skill recomienda **Plus Jakarta Sans** especificamente para "SaaS products, web apps, dashboards, B2B, productivity tools".
+2. **Los tokens de color de marca ya existian pero no estaban conectados a Tailwind** — `globals.css` ya definia `--zircon-blue`/`--zircon-blue-dark`, pero el azul de marca se repetia como hex inline (`style={{color:'#0170B9'}}`) decenas de veces en vez de usar esas variables.
+3. **Tarjetas de resumen duplicadas ~10 veces** con el mismo markup entre Dashboard, Mi Reporte y Mis Horas.
+4. **Estados de carga eran solo texto plano** ("Cargando...") — el skill marca esto como severidad alta.
+5. **Estados vacios sin jerarquia visual** (texto gris suelto).
+6. **Numeros en tablas de horas sin cifras tabulares** (`tabular-nums`), causando que los digitos salten de ancho entre filas.
+7. **Tap targets chicos en mobile** — el boton de borrar fila en Mis Horas mobile tenia ~24×24px, por debajo del minimo de 44×44px.
+
+El producto ya tiene identidad de marca establecida (azul #0170B9) — no se reemplazo la paleta por la sugerida por defecto del skill (pensada para landing de marketing, no para un dashboard interno ya existente).
+
+**Bug encontrado durante la implementacion**: `bg-primary/10` (modificador de opacidad de Tailwind) resolvia a transparente porque el color esta definido como `var(--zircon-blue)` crudo, no en el formato con canales RGB que Tailwind 3.4 necesita para aplicar opacidad via `color-mix()`. Se resolvio agregando un tercer token `--zircon-blue-light` (mismo hex `#E6F2FA` que ya se usaba a mano) en vez de depender del modificador de opacidad — verificado contra el DOM real que el color coincide exactamente con el original.
+
+## Decisiones
+
+1. **Plus Jakarta Sans vía `next/font/google`**, aplicada en `app/layout.tsx` (patron recomendado por Next.js, una sola vez en el layout raiz) — visible en toda la app, confirmado con el usuario dado que es un cambio puramente visual sin tocar logica de Gantt/admin.
+2. **Tokens `primary`/`primary-dark`/`primary-light`** en `tailwind.config.ts`, mapeados a las variables `--zircon-*` ya existentes en `globals.css` — mismos hex, cero cambio visual, solo reemplaza el inline-hex disperso por clases Tailwind dentro de las 3 pantallas objetivo.
+3. **Componentes compartidos nuevos** en `components/ui/`: `StatCard` (icono+numero+label, con variante `size='lg'` para Dashboard), `EmptyState` (icono+mensaje), `Skeleton` (`SkeletonCard`/`SkeletonRow`, `animate-pulse`).
+4. **`tabular-nums`** aplicado a las tablas/inputs de horas y a los valores de las tarjetas de resumen.
+5. **Tap target del boton de borrar fila en Mis Horas mobile** ampliado a 44×44px (`min-w-[44px] min-h-[44px]`) sin agrandar el icono visualmente.
+6. Los estilos condicionales complejos de las celdas de la tabla pivot (colores por dia/hoy/fin de semana) se dejan como estan — no es el foco de esta pasada, y fragmentar esos `style={{}}` no aporta valor real.
+
+## Tech Stack
+
+Sin librerias nuevas — `next/font/google` ya es parte de Next 14.
+
+## Project Structure
+
+```
+app/layout.tsx              -> next/font/google Plus Jakarta Sans
+app/globals.css             -> +--zircon-blue-light, font-size base 15px->16px, limpia font-family (ahora via Tailwind)
+tailwind.config.ts          -> +colors.primary/primary-dark/primary-light, +fontFamily.sans
+components/ui/StatCard.tsx  -> nuevo
+components/ui/EmptyState.tsx -> nuevo
+components/ui/Skeleton.tsx  -> nuevo
+app/dashboard/page.tsx      -> usa StatCard/EmptyState/Skeleton, tokens de color
+app/mi-reporte/page.tsx     -> idem
+app/mis-horas/page.tsx      -> idem + tap target del boton de borrar en mobile
+```
+
+## Code Style
+
+Componentes compartidos chicos y sin estado, mismo patron que `SearchableSelect`. Tokens de color via CSS custom properties + Tailwind `theme.extend.colors`, no hardcodeados de nuevo.
+
+## Testing Strategy
+
+Verificacion manual contra DOM real (no solo visual) + `npx tsc --noEmit` + `npx next lint` + `npm run build`. Verificado: fuente cargada (`getComputedStyle(body).fontFamily`), color de los tokens (`getComputedStyle` de los icon-box, coincide exacto con el hex original), tamano real del boton de borrar en mobile (44×44px), `tabular-nums` aplicado, datos correctos en las 3 pantallas, Gantt sin romperse con la fuente nueva (fuera de alcance de codigo, pero afectado visualmente por el cambio global).
+
+## Boundaries
+
+- **Never**: tocar Gantt, Control de Horas, `/projects`, `/holidays`, `/resources`, pantallas `/admin/*`, `Sidebar.tsx`, ni ningun `useQuery`/endpoint/estado de las 3 pantallas (cambio puramente visual). No reemplazar la paleta de marca. No instalar librerias nuevas.
+
+## Success Criteria
+
+1. Tipografia Plus Jakarta Sans aplicada consistentemente en toda la app.
+2. Tarjetas de resumen usan el componente compartido en las 3 pantallas, con los mismos valores/colores que antes.
+3. Estados vacios y de carga tienen tratamiento visual (icono+mensaje / skeleton) en vez de texto plano.
+4. Numeros de horas alinean con `tabular-nums`.
+5. Boton de borrar fila en Mis Horas mobile mide 44×44px.
+6. `git diff --stat` confirma cero cambios en Gantt, Control de Horas, admin y demas pantallas fuera de alcance (salvo `app/layout.tsx`, `app/globals.css`, `tailwind.config.ts`, la base compartida).
+7. `npx tsc --noEmit`, `npx next lint` y `npm run build` pasan sin errores.
