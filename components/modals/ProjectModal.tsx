@@ -101,8 +101,13 @@ export default function ProjectModal({ open, onClose, editProject }: Props) {
       description: 'Las horas ya cargadas contra ella no se pierden.',
     })
     if (!ok) return
-    await fetch(`/api/tasks/${task.id}`, { method: 'DELETE' })
-    qc.invalidateQueries({ queryKey: ['tasks', editProject?.id] })
+    const res = await fetch(`/api/tasks/${task.id}`, { method: 'DELETE' })
+    if (res.ok) {
+      qc.invalidateQueries({ queryKey: ['tasks', editProject?.id] })
+    } else {
+      const body = await res.json().catch(() => ({}))
+      toast({ title: body.error ?? 'No se pudo eliminar la tarea', variant: 'error' })
+    }
   }
 
   useEffect(() => {
