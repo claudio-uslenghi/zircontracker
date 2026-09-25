@@ -218,3 +218,18 @@ export const PROJECT_PALETTE = [
   '#0070C0', '#833C00', '#1F7391', '#7D3C98',
   '#BF8F00', '#C00000', '#375623', '#203864',
 ]
+
+export interface SyncRunSummary {
+  id: number
+  source: string
+  trigger: 'cron' | 'manual'
+  ranAt: string
+  ok: boolean
+  created: number
+  updated: number
+  deleted: number
+  unchanged: number
+  unmatchedCount: number
+  errorCount: number
+  details: string
+}

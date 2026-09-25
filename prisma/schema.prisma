@@ -78,8 +78,26 @@ model Vacation {
   notes      String   @default("")
   type       String   @default("Vacation / Day Off")
   halfDay    Boolean  @default(false)
+  // Set only on vacations mirrored from the Google Sheet ("gsheet:<Timestamp>|<email>");
+  // NULL = loaded by hand, which the sync never touches.
+  sourceKey  String?  @unique
 
   resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+}
+
+model SyncRun {
+  id             Int      @id @default(autoincrement())
+  source         String
+  trigger        String
+  ranAt          DateTime @default(now())
+  ok             Boolean
+  created        Int      @default(0)
+  updated        Int      @default(0)
+  deleted        Int      @default(0)
+  unchanged      Int      @default(0)
+  unmatchedCount Int      @default(0)
+  errorCount     Int      @default(0)
+  details        String   @default("")
 }
 
 model CountryHoliday {
