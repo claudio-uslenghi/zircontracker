@@ -1847,3 +1847,252 @@ de borrado.
 ## Open Questions
 
 Ninguna.
+
+---
+
+## Totales por rol + Registros de factura por cliente/mes
+
+### Objective
+
+Dos features relacionadas con Vacaciones y Facturación:
+
+1. **Totales por rol**: en `/holidays`, la vista "Totales" hoy muestra todas las personas sin
+   importar quién esté logueado. Un colaborador (no admin) debe ver solo sus propios totales; un
+   admin sigue viendo todos, como hoy.
+2. **Registros de factura**: cada vez que el admin genera y descarga el archivo de Facturación
+   (`/admin/billing`), además de bajar el `.xlsx` se debe crear o actualizar, por cliente con
+   `Total > 0` ese mes, un registro persistente en la base con los campos de la imagen adjunta
+   (Company, Customer, Description, Total, Billed, Date Inv, Paid, Date Paid, Outstanding,
+   Outstanding days, Comments). Regenerar el mismo mes actualiza esos registros en vez de duplicarlos.
+   Se agrega una vista "Facturas" para listarlos, filtrar/ordenar por mes, cliente y estado, y
+   editar `Billed`, `Paid`, `Date Paid` y `Comments` a mano.
+
+### Hallazgos clave (solo lectura)
+
+- `app/holidays/page.tsx` ya tiene `isAdmin` (línea 34) y `myResource` (query `/api/me/resource`,
+  habilitada solo `!isAdmin`). La vista Totales se renderiza en la línea 189:
+  `{view === 'totals' && <VacationTotals vacations={vacations} />}` — el componente no filtra por
+  rol, recibe la lista completa tal cual.
+- `lib/invoice-sheet.ts` define `INVOICE_TEMPLATE`: 10 bloques (`infogain, infinite, hover, suku,
+  imouy, ideal, cash, smartway, mob, claldy`), cada uno con una lista de items (`line`/`sum`/
+  `vat`/`discount`) que `computeInvoice(states)` reduce a `ComputedRow[]`. **Por construcción, el
+  último row no-blank de cada bloque es su total final** (el subtotal con IVA para `infogain`, el
+  total post-descuento para `infinite`, la única línea para `cash`/`smartway`, etc.) — no hay un
+  campo "total de bloque" explícito hoy, pero se puede derivar así sin tocar la lógica de cálculo.
+- El botón "Descargar .xlsx (2 hojas)" (`app/admin/billing/page.tsx:398`) llama a
+  `handleExport`, que hace `POST /api/reports/invoicing/export` con `{ month, includeResources,
+  includeProjects, invoiceLines }`. Ese endpoint (`app/api/reports/invoicing/export/route.ts`) ya
+  recibe el estado completo de las líneas de factura (`invoiceLines: Record<string, LineState>`)
+  y llama a `computeInvoice` para armar la hoja "Facturas" — es el punto natural para calcular el
+  total por bloque y persistir los registros, sin duplicar lógica de cálculo.
+- Encontré (investigación de una feature anterior, pestaña "Datos empresas" de la planilla real)
+  términos de pago en días para algunos clientes: MOB = 7, Claldy = 7, Ideal Protein = 10, Smartway
+  (Nidefiler SA) = 15, Cash SA = 7. Para el resto de los bloques (`infogain, infinite, hover, suku,
+  imouy`) no tengo el dato confirmado — ver Open Questions.
+- No existe hoy ningún modelo de Prisma para facturas; hay que crear uno nuevo.
+
+### Decisiones confirmadas con el usuario (preguntas ya respondidas)
+
+1. **Regeneración de un mes ya generado**: se pisa `Total` (recalculado); se mantienen `Billed`,
+   `Paid`, `Date Paid` y `Comments` tal como estén (para no perder ediciones manuales).
+2. **`Billed` es editable**, igual que `Paid`/`Comments`.
+   - *Nota de reconciliación*: la pregunta anterior decía literalmente "se pisan Total/Billed" y
+     esta dice "Billed editable igual que Paid/Comments" — son contradictorias tal cual están
+     escritas. Resuelvo a favor de la editabilidad (si `Billed` se pisara en cada regeneración,
+     cualquier ajuste manual se perdería la primera vez que alguien vuelva a generar el mes, lo
+     cual no tiene sentido si el campo es editable). **Comportamiento final: `Billed` se inicializa
+     igual a `Total` cuando se crea el registro por primera vez, y a partir de ahí se comporta
+     exactamente como `Paid`/`Comments` — nunca se vuelve a tocar automáticamente, ni siquiera en
+     una regeneración.** Lo marco para que lo confirmes al revisar este spec.
+3. **Outstanding / Outstanding days / estado "Vencida"** — calculados en el momento de mostrarlos,
+   no guardados en la base (así no quedan desactualizados):
+   - `Outstanding` = `Billed` mientras `Paid = false`; `0` una vez `Paid = true`.
+   - `Outstanding days` = días entre `Date Inv` y hoy mientras no está pagada; se congela en
+     `Date Paid − Date Inv` una vez pagada.
+   - Nuevo estado `Vencida` = no pagada Y `Outstanding days` supera los días de término de pago de
+     ese cliente. Si está pagada → `Pagada`. Si no está vencida → `Pendiente`.
+4. **Qué clientes generan registro cada mes**: solo los bloques con `Total > 0` ese mes (el cálculo
+   descrito arriba, derivado del último row no-blank del bloque). Bloques en cero ese mes no generan
+   fila — nada de filas vacías.
+
+### Diseño
+
+#### 1. Totales por rol (`app/holidays/page.tsx`, `components/holidays/VacationTotals.tsx`)
+
+Sin cambios en el componente. En el call site (línea 189), filtrar antes de pasar la prop:
+
+```tsx
+{view === 'totals' && (
+  <VacationTotals
+    vacations={isAdmin ? vacations : vacations.filter((v) => v.resourceId === myResource?.id)}
+  />
+)}
+```
+
+Si un colaborador no tiene `myResource` vinculado, la lista queda vacía y el componente ya
+maneja el caso "Sin vacaciones registradas" / "Sin vacaciones tomadas en {año}" — no hace falta
+un estado nuevo.
+
+#### 2. Modelo de datos — `ClientInvoice` (nuevo, `prisma/schema.prisma`)
+
+```prisma
+model ClientInvoice {
+  id          Int       @id @default(autoincrement())
+  month       String    // "YYYY-MM"
+  blockId     String    // id de INVOICE_TEMPLATE (mob, claldy, infogain, ...)
+  company     String    @default("Zircon")
+  customer    String    // nombre del cliente en la factura (legal, cuando se conoce)
+  description String    @default("")
+  total       Float     // se recalcula en cada generación
+  billed      Float     // = total al crear; editable, nunca se pisa después
+  dateInv     DateTime  // fecha de factura = último día del mes facturado; se fija una sola vez
+  paid        Boolean   @default(false)
+  datePaid    DateTime?
+  comments    String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([month, blockId])
+}
+```
+
+Migración: idempotente vía `scripts/add-client-invoice.ts` (mismo patrón que el resto del
+proyecto — `CREATE TABLE IF NOT EXISTS`), seguido de `npx prisma generate`. No se usa
+`prisma migrate`/`db push` (la URL de `schema.prisma` es un placeholder).
+
+`Outstanding`, `Outstanding days` y `status` **no se guardan**: se calculan en el endpoint de
+lectura (`lib/invoice-records.ts`) a partir de `billed`, `paid`, `dateInv`, `datePaid` y una
+tabla de términos de pago:
+
+```ts
+export const CLIENT_PAYMENT_TERM_DAYS: Record<string, number> = {
+  mob: 7, claldy: 7, ideal: 10, smartway: 15, cash: 7,
+  infogain: 30, infinite: 30, hover: 30, suku: 30, imouy: 30, // sin confirmar — ver Open Questions
+}
+```
+
+#### 3. Generar/actualizar registros al exportar
+
+En `app/api/reports/invoicing/export/route.ts`, antes de devolver el `.xlsx`:
+
+- Calcular `computeInvoice(invoiceLines)` (ya se hace).
+- Para cada bloque de `INVOICE_TEMPLATE`, tomar el total del último row no-blank de ese bloque en
+  el resultado (`getBlockTotals(rows)`, función nueva en `lib/invoice-sheet.ts` para no duplicar
+  la lógica de "cuál es el total del bloque" en dos lugares).
+- Filtrar bloques con `total > 0`.
+- `prisma.$transaction` con un `upsert` por bloque, `where: { month_blockId: { month, blockId } }`:
+  - **create**: `company: 'Zircon'`, `customer` = nombre resuelto (ver tabla de clientes abajo),
+    `description: ''`, `total`, `billed: total`, `dateInv` = último día del mes (`YYYY-MM-31/30/...`),
+    `paid: false`, `datePaid: null`, `comments: ''`.
+  - **update**: solo `total`. Todo lo demás (`billed`, `paid`, `datePaid`, `comments`, `customer`,
+    `description`, `dateInv`) se deja intacto.
+- La respuesta sigue siendo el archivo binario; se agrega un header `X-Invoice-Records-Summary`
+  (ej. `created=2;updated=6`) que el frontend lee para mostrar un toast de confirmación además
+  de la descarga (no hace falta un segundo round-trip).
+
+Tabla de nombres de cliente (`CLIENT_DISPLAY_NAME`, `lib/invoice-records.ts`) — confirmados
+contra la pestaña "Datos empresas" de la planilla real; el resto usa el label del bloque como
+placeholder editable:
+
+```ts
+mob: 'MOBMyOwnBrandOU', claldy: 'Claldy S.A', ideal: 'Ideal Protein Company Inc.',
+smartway: 'Nidefiler SA', cash: 'Cash SA',
+infogain: 'Infogain', infinite: 'Infinite', hover: 'Hover', suku: 'Suku', imouy: 'IMOUY', // placeholder
+```
+
+Dado que 5 de los 10 nombres son un placeholder (no la razón social real), agrego `customer`
+a la lista de campos editables (además de `Billed`/`Paid`/`Comments`) para poder corregirlos sin
+otro round-trip de desarrollo. Ver Open Questions.
+
+#### 4. Botón "Descargar .xlsx (2 hojas)" → renombrar
+
+El botón ahora también persiste registros, no es solo una descarga. Recomiendo
+**"Generar facturas del mes"** (reemplaza el texto en `app/admin/billing/page.tsx:398`; el
+loading state pasa de "Generando archivo..." a "Generando facturas...").
+
+#### 5. Vista "Facturas" — nuevo tab en `/admin/billing`
+
+`app/admin/billing/page.tsx` gana tabs "Generar" | "Facturas" (mismo patrón `TABS` ya usado en
+`/admin/hours`). El tab "Facturas" es una tabla nueva, alimentada por:
+
+- `GET /api/invoices?month=&blockId=&status=` (nuevo endpoint, admin-only vía `requireAdmin()`) —
+  devuelve todos los `ClientInvoice` con `outstanding`/`outstandingDays`/`status` ya calculados,
+  ordenable por mes/cliente/estado desde el cliente (tabla chica, no hace falta paginar en el
+  server todavía).
+- Filtros: `<select>` de mes (meses con al menos un registro), cliente (label de bloque), estado
+  (Pendiente/Vencida/Pagada). Columnas ordenables por click en el header (mismo patrón visual que
+  el resto de tablas del admin).
+- Edición inline de `Billed`, `Paid` (checkbox), `Date Paid` (date picker, solo visible/editable
+  si `Paid = true`; si el admin tilda `Paid` sin fijar fecha, default = hoy) y `Comments` (texto) —
+  `PATCH /api/invoices/[id]` con el subconjunto de campos cambiados, admin-only. Al destildar
+  `Paid`, `datePaid` se limpia (vuelve a `null`) para que `Outstanding days` vuelva a correr desde
+  hoy.
+- `Company` no es editable (constante "Zircon"); `Customer`/`Description` editables desde la misma
+  fila (ver punto 3, dado que 5 nombres son placeholder).
+
+### Project Structure
+
+```
+prisma/schema.prisma              — + model ClientInvoice
+scripts/add-client-invoice.ts     — nuevo, migración idempotente
+lib/invoice-sheet.ts              — + getBlockTotals(rows)
+lib/invoice-records.ts            — nuevo: CLIENT_PAYMENT_TERM_DAYS, CLIENT_DISPLAY_NAME,
+                                     computeOutstanding()/computeStatus() (puro, testeable)
+app/api/reports/invoicing/export/route.ts — + upsert de ClientInvoice antes de responder
+app/api/invoices/route.ts         — nuevo: GET (listado + filtros)
+app/api/invoices/[id]/route.ts    — nuevo: PATCH (editar billed/paid/datePaid/comments/
+                                     customer/description)
+app/admin/billing/page.tsx        — + tabs Generar/Facturas, botón renombrado
+components/billing/InvoicesTable.tsx — nuevo: tabla filtrable/ordenable/editable
+app/holidays/page.tsx             — filtro de vacations por rol antes de VacationTotals
+```
+
+### Code Style
+
+Mismas convenciones que el resto del repo: lógica de cálculo pura y testeable separada de la ruta
+API (como `computeInvoice`/`planSync`), fechas manejadas como `YYYY-MM-DD`/mes-fin de mes con
+cuidado de UTC-3 (mismo patrón `localDate()` ya usado en `HolidaysCalendar.tsx`), `requireAdmin()`
+en todo endpoint de escritura o lectura de facturas.
+
+### Testing Strategy
+
+- `npx tsc --noEmit` y `npm run build` antes de cerrar.
+- QA manual con datos descartables contra la Turso real (como el resto de la sesión): generar un
+  mes, confirmar filas creadas solo para clientes con `Total > 0`; regenerar el mismo mes tras
+  editar `Billed`/`Paid`/`Comments` a mano y confirmar que esos tres campos sobreviven mientras
+  `Total` se actualiza; editar `Customer` y confirmar que una regeneración posterior no lo pisa;
+  marcar `Paid` y confirmar que `Outstanding` cae a 0 y el estado pasa a "Pagada"; probar un
+  cliente con término de pago vencido y confirmar el estado "Vencida"; filtrar/ordenar en la
+  vista Facturas; probar Totales logueado como colaborador vs admin.
+- Limpiar todos los fixtures descartables (registros de prueba, meses de prueba) al terminar.
+
+### Boundaries
+
+- No tocar la lógica de `computeInvoice`/`INVOICE_TEMPLATE` — el nuevo código solo lee su
+  resultado, no lo modifica.
+- Los campos `Outstanding`/`Outstanding days`/estado nunca se guardan en la base — siempre
+  derivados, para no quedar desactualizados.
+- `Company`, `Description` (salvo edición manual) y `dateInv` no se recalculan en una
+  regeneración — son "hechos" del registro, no derivados del cálculo mensual.
+- Nada de esto cambia el `.xlsx` que se descarga hoy — el archivo sigue siendo idéntico; el cambio
+  es 100% aditivo (persistencia + nueva vista).
+
+### Success Criteria
+
+- Un colaborador logueado en `/holidays` → "Totales" ve solo sus propias filas; un admin ve todas.
+- Generar Facturación para un mes crea un `ClientInvoice` por cada cliente con `Total > 0` ese mes,
+  ninguno para los que están en cero.
+- Regenerar el mismo mes actualiza `Total` y preserva `Billed`/`Paid`/`Date Paid`/`Comments`/
+  `Customer`/`Description` editados a mano.
+- La vista "Facturas" lista, filtra y ordena por mes/cliente/estado, con `Paid`/`Comments`/`Billed`
+  editables inline y el estado "Vencida" calculado correctamente contra los términos de pago.
+
+### Open Questions
+
+1. **Términos de pago sin confirmar** (`infogain, infinite, hover, suku, imouy`): usé 30 días como
+   default hasta tener el dato real — esto afecta directamente cuándo una factura pasa a "Vencida"
+   para esos 5 clientes. ¿Tenés esos términos a mano, o seguimos con 30 días hasta ajustarlos?
+2. **Nombres de cliente sin confirmar** (mismos 5 bloques): uso el label del bloque
+   (`Infogain`/`Infinite`/`Hover`/`Suku`/`IMOUY`) como placeholder en `Customer` — por eso lo dejo
+   editable desde la vista Facturas, para poder corregirlo a mano sin otro deploy.
+3. **Nombre del botón**: propongo "Generar facturas del mes" — avisame si preferís otro texto.

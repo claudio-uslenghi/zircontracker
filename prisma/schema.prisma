@@ -177,6 +177,25 @@ model TimeEntry {
   @@unique([resourceId, projectId, date, entryType, taskId])
 }
 
+model ClientInvoice {
+  id          Int       @id @default(autoincrement())
+  month       String
+  blockId     String
+  company     String    @default("Zircon")
+  customer    String
+  description String    @default("")
+  total       Float
+  billed      Float
+  dateInv     DateTime
+  paid        Boolean   @default(false)
+  datePaid    DateTime?
+  comments    String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([month, blockId])
+}
+
 model ProjectResourceRate {
   id          Int     @id @default(autoincrement())
   projectId   Int
