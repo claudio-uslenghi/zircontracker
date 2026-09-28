@@ -49,6 +49,16 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Error'
     if (msg === 'Forbidden') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    // FK violation: this task still has time entries pointing at it. Report
+    // the count so the admin knows to reassign/merge those hours into
+    // another task before retrying, instead of a raw Prisma stack trace.
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2003') {
+      const count = await prisma.timeEntry.count({ where: { taskId: Number(params.id) } })
+      return NextResponse.json(
+        { error: `No se puede borrar: tiene ${count} hora${count !== 1 ? 's' : ''} cargada${count !== 1 ? 's' : ''}. Reasigná esas horas a otra tarea antes de borrarla.` },
+        { status: 409 }
+      )
+    }
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
