@@ -16,6 +16,8 @@ const schema = z.object({
   startDate: z.string().min(1),
   endDate: z.string().min(1),
   notes: z.string().optional(),
+  type: z.string().optional(),
+  halfDay: z.boolean().optional(),
 })
 
 type FormData = z.infer<typeof schema>
@@ -61,7 +63,7 @@ export default function VacationModal({ open, onClose, lockedResource }: Props) 
     const res = await fetch('/api/vacations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resourceId, startDate: data.startDate, endDate: data.endDate, notes: data.notes }),
+      body: JSON.stringify({ resourceId, startDate: data.startDate, endDate: data.endDate, notes: data.notes, type: data.type, halfDay: data.halfDay === true }),
     })
     if (res.ok) {
       qc.invalidateQueries({ queryKey: ['vacations'] })
@@ -107,6 +109,20 @@ export default function VacationModal({ open, onClose, lockedResource }: Props) 
           {workingDays > 0 && (
             <p className="text-blue-600 text-sm">{workingDays} días hábiles afectados</p>
           )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Tipo</label>
+              <select {...register('type')} defaultValue="Vacation / Day Off" className="w-full border rounded px-3 py-2 text-sm">
+                <option value="Vacation / Day Off">Vacation / Day Off</option>
+                <option value="Sick Day">Sick Day</option>
+                <option value="Birthday">Birthday</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm sm:mt-7">
+              <input type="checkbox" {...register('halfDay')} className="h-4 w-4" />
+              Medio día (Half Day)
+            </label>
+          </div>
           <div>
             <label className="block text-sm font-medium mb-1">Notas</label>
             <input {...register('notes')} className="w-full border rounded px-3 py-2 text-sm" />

@@ -3,15 +3,17 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
-import { eachDayOfInterval, isWeekend, parseISO } from 'date-fns'
+import { eachDayOfInterval, isWeekend, parseISO, format } from 'date-fns'
 import { formatDate } from '@/lib/date-utils'
-import { Plus, Trash2, Upload, Download, Filter, Pencil, Search } from 'lucide-react'
+import { Plus, Trash2, Upload, Download, Filter, Pencil, Search, RefreshCw, List, CalendarDays } from 'lucide-react'
 import HolidayModal from '@/components/modals/HolidayModal'
 import VacationModal from '@/components/modals/VacationModal'
 import VacationCsvImportModal from '@/components/modals/VacationCsvImportModal'
+import VacationSyncModal from '@/components/modals/VacationSyncModal'
+import HolidaysCalendar from '@/components/holidays/HolidaysCalendar'
 import CsvImportModal from '@/components/modals/CsvImportModal'
 import Pagination from '@/components/ui/Pagination'
-import type { Resource, Vacation, CountryHoliday } from '@/types'
+import type { Resource, Vacation, CountryHoliday, SyncRunSummary } from '@/types'
 import { FLAG_BY_NAME } from '@/lib/countries'
 import { confirmDialog } from '@/lib/confirm-dialog'
 
@@ -37,6 +39,8 @@ export default function HolidaysPage() {
   const [showVacationCsvModal, setShowVacationCsvModal] = useState(false)
   const [showCsvModal, setShowCsvModal] = useState(false)
   const [filterCountry, setFilterCountry] = useState<string>('')
+  const [view, setView] = useState<'list' | 'calendar'>('list')
+  const [showSyncModal, setShowSyncModal] = useState(false)
 
   const [vacationSearch, setVacationSearch] = useState('')
   const [vacationPage, setVacationPage] = useState(1)
@@ -59,6 +63,12 @@ export default function HolidaysPage() {
   const { data: countryHolidays = [] } = useQuery<CountryHoliday[]>({
     queryKey: ['country-holidays'],
     queryFn: () => fetch('/api/country-holidays').then((r) => r.json()),
+  })
+
+  const { data: lastSync } = useQuery<SyncRunSummary | null>({
+    queryKey: ['vacation-sync-last'],
+    queryFn: () => fetch('/api/vacations/sync').then((r) => (r.ok ? r.json() : null)),
+    enabled: isAdmin,
   })
 
   const { data: vacations = [] } = useQuery<Vacation[]>({
@@ -128,7 +138,46 @@ export default function HolidaysPage() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 sm:space-y-8">
-      <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Vacaciones & Feriados</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Vacaciones & Feriados</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5" role="group" aria-label="Vista">
+            {([['list', 'Lista', List], ['calendar', 'Calendario', CalendarDays]] as const).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                onClick={() => setView(key)}
+                aria-pressed={view === key}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-md min-h-[40px] transition-colors ${
+                  view === key ? 'bg-[#0170B9] text-white' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Icon size={14} /> {label}
+              </button>
+            ))}
+          </div>
+          {isAdmin && (
+            <button
+              onClick={() => setShowSyncModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm min-h-[40px]"
+            >
+              <RefreshCw size={14} /> Sincronizar con Google Sheet
+            </button>
+          )}
+        </div>
+      </div>
+      {isAdmin && lastSync && (
+        <p className={`text-xs ${lastSync.ok ? 'text-gray-500' : 'text-red-600'}`}>
+          Última sincronización: {format(new Date(lastSync.ranAt), 'dd/MM/yyyy HH:mm')} ({lastSync.trigger === 'cron' ? 'automática' : 'manual'})
+          {lastSync.ok
+            ? ` · ${lastSync.created} creadas, ${lastSync.updated} actualizadas, ${lastSync.deleted} borradas${lastSync.unmatchedCount ? `, ${lastSync.unmatchedCount} mail(s) sin match` : ''}`
+            : ' · falló'}
+        </p>
+      )}
+
+      {view === 'calendar' && <HolidaysCalendar vacations={vacations} holidays={countryHolidays} />}
+
+      {view === 'list' && (
+      <>
 
       {/* ── VACATIONS ──────────────────────────────────────────────────────── */}
       <section>
@@ -334,6 +383,8 @@ export default function HolidaysPage() {
           Los feriados se aplican automáticamente a todos los recursos del país. Al agregar un recurso nuevo, hereda los feriados de su país.
         </p>
       </section>
+      </>
+      )}
 
       {isAdmin && (
         <HolidayModal open={showHolidayModal} onClose={() => { setShowHolidayModal(false); setEditHoliday(null) }} editHoliday={editHoliday} />
@@ -344,6 +395,7 @@ export default function HolidaysPage() {
         lockedResource={isAdmin ? undefined : (myResource ? { id: myResource.id, name: myResource.name } : undefined)}
       />
       {isAdmin && <VacationCsvImportModal open={showVacationCsvModal} onClose={() => setShowVacationCsvModal(false)} />}
+      {isAdmin && <VacationSyncModal open={showSyncModal} onClose={() => setShowSyncModal(false)} />}
       {isAdmin && <CsvImportModal open={showCsvModal} onClose={() => setShowCsvModal(false)} />}
     </div>
   )

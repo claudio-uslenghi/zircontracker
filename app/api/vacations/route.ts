@@ -12,6 +12,8 @@ export async function GET() {
   return NextResponse.json(vacations)
 }
 
+const VACATION_TYPES = ['Vacation / Day Off', 'Sick Day', 'Birthday']
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -24,6 +26,8 @@ export async function POST(req: NextRequest) {
         startDate: new Date(body.startDate),
         endDate: new Date(body.endDate),
         notes: body.notes ?? '',
+        type: VACATION_TYPES.includes(body.type) ? body.type : 'Vacation / Day Off',
+        halfDay: body.halfDay === true,
       },
       include: { resource: true },
     })

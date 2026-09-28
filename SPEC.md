@@ -1571,3 +1571,142 @@ calculado cacheado, para que se comporte igual que la planilla actual al subirla
 1. Proyecto de los bloques sin equivalente claro en la base (Infinite, Hover, Cash): supuesto = líneas
    manuales editables con aviso, hasta que digas a qué proyecto corresponden.
 2. `E24 = E22 - D24` (Descuento de Infinite): se replica tal cual; D24 queda editable (vacío = 0).
+
+---
+
+# Spec: Sync de vacaciones desde Google Sheet + vista Calendario
+
+## Objective
+
+Hoy las vacaciones se cargan a mano o con un import de CSV (modal en `/holidays`). El equipo las registra
+en un Google Form cuyas respuestas caen en la planilla "Registro Inasistencias/Vacaciones". Se quiere que
+ZirconTracker las **sincronice solo** (job programado + botón manual) y que exista una **vista Calendario**
+con feriados y ausencias, como en la app actual del equipo.
+
+**Éxito** = (1) un job diario y un botón "Sincronizar" traen a la base las respuestas del Form, con su tipo
+(`Type of Time off`) y medio día (`Half Day or Full Day?`), sin duplicar y espejando correcciones/borrados de
+la hoja; (2) `/holidays` tiene una vista **Calendario** mensual con feriados por país y ausencias por persona.
+
+## Hallazgos clave (solo lectura)
+
+- La planilla tiene **una pestaña** (`vacations`, A1:F131): `Timestamp, Email Address, Starting, Finishing,
+  Half Day or Full Day?, Type of Time off`. Valores: `Full Day`/`Half Day`; `Vacation / Day Off`/`Sick Day`/`Birthday`.
+- El usuario ya tiene un **Web App de Apps Script** que expone la hoja. Un `GET` devuelve **JSON**: array de
+  arrays (fila 1 = encabezado + 130 filas). Fechas en ISO **a medianoche UTC-3** (`…T03:00:00.000Z`) →
+  fecha real = ISO − 3 h. Sin autenticación: la URL es de por sí un secreto (ver Boundaries).
+- **Clave de fila**: `Timestamp + email` es única en las 130 filas.
+- `Vacation.halfDay` y `Vacation.type` **ya existen** en el schema y se muestran en la tabla; el sync los llena.
+- Cobertura de mails: de las 56 filas de 2026, **54 matchean directo** con `Resource.email`; 2 quedan sin match
+  (`luciana.diniz@riskified.com`, `matiascasalh@gmail.com`, mails alternativos de personas ya cargadas).
+- Calidad de datos: 1 fila con fin < inicio (faguero, 9/24 → 9/3) y 1 reenvío del mismo período (ntoledo
+  8/18–9/2, cargado dos veces). Además hay vacaciones históricas cargadas a mano/CSV que pueden solaparse.
+- Infra: Vercel, sin cron ni `vercel.json` hoy; el middleware exige sesión en `/api/*` (un cron no tiene sesión).
+- Permisos: `/holidays` ya está en la matriz de permisos → una vista Calendario dentro de la página no requiere
+  permisos nuevos.
+
+## Decisiones confirmadas con el usuario
+
+1. **Lectura de la planilla**: vía el Web App de Apps Script (variable de entorno `VACATIONS_SHEET_URL`, en Vercel
+   y en `.env.local`; **nunca en el repo**). Responde al "¿lo subo a Vercel?": sí, como env var.
+2. **Calendario**: toggle `Lista | Calendario` dentro de Feriados & Vacaciones (`/holidays`), sin sección de menú nueva.
+3. **Espejo de la hoja**: lo importado desde la planilla se crea/actualiza/borra según la hoja (clave por fila).
+   Las vacaciones cargadas a mano en la app **nunca** se tocan. Las ya importadas se "adoptan" sin duplicar.
+4. **Alcance**: filas con `Starting` del año en curso en adelante (2026+).
+5. **Half Day / Type of Time off**: se importan y se muestran; además el formulario manual "Agregar vacación"
+   gana los campos Tipo y Medio día (mismos valores) para que el calendario sea coherente.
+6. **Disparo**: cron diario + botón manual de admin.
+
+## Diseño
+
+**Schema** (migración idempotente `scripts/add-vacation-sync.ts`, mismo patrón que las anteriores contra Turso):
+- `Vacation.sourceKey String? @unique` — `gsheet:<Timestamp>|<email en minúsculas>`; `NULL` = cargada a mano.
+- `SyncRun` (`id, source, trigger ('cron'|'manual'), ranAt, ok, created, updated, deleted, unchanged,
+  unmatchedCount, errorCount, details` JSON en string) — para ver qué hizo el cron (sus fallos son invisibles si no).
+
+**`lib/vacation-sync.ts`** (funciones puras, sin red ni Prisma, testeables):
+- `parseSheetRows(rows, today)`: valida el encabezado exacto; fecha = ISO−3 h → `YYYY-MM-DD`; descarta filas de
+  años anteriores al actual; errores por fila (fecha inválida, fin < inicio) sin cortar el resto; **colapsa
+  duplicados exactos** (mismo email + inicio + fin) conservando la respuesta más reciente.
+- `planSync({ entries, resources, existing })` → `{ create, update, delete, adopt, unchanged, unmatched, errors }`.
+  Match **solo por email exacto** (sin heurístico, sin backfill de `Resource.email`; eso queda en el modal manual).
+  `adopt` = vacación existente sin `sourceKey` con el mismo (recurso, inicio, fin) → se le asigna la clave.
+  `delete` = solo vacaciones **con** `sourceKey` cuya clave ya no está en la hoja.
+
+**Salvaguardas** (un endpoint abierto sin token + borrado automático exige cuidado):
+- Si la respuesta no es un array con el encabezado esperado, o viene vacía → abortar sin tocar la base.
+- Tope de borrado por corrida: si `delete` supera 10 filas o el 20 % de las espejadas, el cron **no borra**
+  y deja el aviso en `SyncRun`; el botón manual pide confirmación explícita.
+- El botón siempre hace primero un **dry-run** (preview) y recién después "Aplicar".
+
+**Endpoints**:
+- `POST /api/vacations/sync` (admin) — `{ dryRun }` → plan / resultado. Usa el mismo núcleo que el cron.
+- `GET /api/cron/vacations-sync` — exige `Authorization: Bearer ${CRON_SECRET}` (comparación en tiempo
+  constante; rechaza si la variable no está seteada). `/api/cron` se agrega a `PUBLIC_PATHS` del middleware.
+- `vercel.json`: `{ "crons": [{ "path": "/api/cron/vacations-sync", "schedule": "0 10 * * *" }] }` (diario,
+  compatible con plan Hobby; 07:00 UTC-3).
+- `POST/GET /api/vacations` aceptan `type` y `halfDay`.
+
+**UI en `/holidays`**:
+- Toggle `Lista | Calendario` arriba de la página.
+- Admin: botón "Sincronizar con Google Sheet" → `VacationSyncModal` (preview con contadores y detalle:
+  a crear / actualizar / borrar / sin match con mail / errores por fila → "Aplicar") y línea "Última
+  sincronización: fecha · resultado" (desde `SyncRun`).
+- `HolidaysCalendar` (nuevo): grilla mensual (lunes primero), flechas de mes + "Hoy", feriados por país
+  (bandera + nombre) y ausencias por persona coloreadas por tipo (Vacation / Sick Day / Birthday), medio día
+  marcado con "½"; fines de semana atenuados; ausencias solo en días hábiles (igual que "Días hábiles");
+  "+N más" con detalle del día al tocar. Filtros: persona, país, tipo. Usa los datos que la página ya carga
+  (`/api/vacations`, `/api/country-holidays`); no requiere API nueva. **Mobile-first**: en <640 px los días
+  muestran puntos/contador y el detalle del día seleccionado se lista debajo de la grilla.
+
+## Project Structure
+
+- `prisma/schema.prisma`, `scripts/add-vacation-sync.ts`, `types/index.ts` (`Vacation.sourceKey`, `SyncRun`).
+- `lib/vacation-sync.ts` (puro) + `lib/vacation-sync-run.ts` (fetch de la hoja + aplicar plan con Prisma).
+- `app/api/vacations/sync/route.ts`, `app/api/cron/vacations-sync/route.ts`, `vercel.json`, `middleware.ts`.
+- `components/holidays/HolidaysCalendar.tsx`, `components/modals/VacationSyncModal.tsx`,
+  `components/modals/VacationModal.tsx` (Tipo + Medio día), `app/holidays/page.tsx` (toggle + botón + estado).
+
+## Code Style
+
+Mismos patrones que el resto: preview con avisos/checkbox como `VacationCsvImportModal`, `SearchableSelect`
+para filtros, `Pagination` intacta en la vista Lista, funciones puras en `lib/`.
+
+## Testing Strategy
+
+Sin suite automatizada; `npx tsc --noEmit` + `npm run build` + QA:
+- **Puro** (script temporal con aserciones sobre `lib/vacation-sync.ts`): fecha UTC-3, encabezado inválido,
+  fin < inicio, duplicado exacto colapsado, adopción sin duplicar, borrado solo con `sourceKey`, tope de borrado.
+- **Dry-run real** contra el endpoint y la base (solo lectura): contadores coherentes (adoptadas / a crear /
+  sin match = los 2 mails alternativos / 1 error de faguero).
+- **Apply** solo contra datos descartables (recurso/mail de prueba con `rows` inyectadas), nunca contra las
+  vacaciones reales sin tu OK; después limpiar.
+- **Cron**: `GET` sin secreto o con secreto incorrecto → 401; con secreto correcto → corre.
+- **Calendario**: mes con feriados y ausencias reales, filtros, medio día, mobile (375 px) y desktop.
+
+## Boundaries
+
+- **Always**: `VACATIONS_SHEET_URL` y `CRON_SECRET` solo en env vars (Vercel + `.env.local` ignorado); no loguear
+  mails en los logs del cron (solo conteos y n.º de fila); nunca tocar vacaciones sin `sourceKey`.
+- **Ask first**: aplicar el primer sync real sobre producción (adopta/crea/borra filas reales); cambiar la
+  frecuencia del cron (depende del plan de Vercel); endurecer el Apps Script.
+- **Never**: commitear la URL; escribir `Resource.email` desde el job; borrar con una respuesta inválida.
+
+## Success Criteria
+
+1. Dry-run muestra el plan sin escribir; Aplicar lo ejecuta y es idempotente (una 2.ª corrida = 0 cambios).
+2. Corregir/borrar una fila en la hoja se refleja en la app en el siguiente sync; lo cargado a mano no cambia.
+3. El cron corre solo, rechaza pedidos sin secreto y deja rastro en `SyncRun`.
+4. `/holidays` → Calendario muestra feriados y ausencias con filtros, usable en mobile y desktop.
+5. `npx tsc --noEmit` y `npm run build` pasan.
+
+## Open Questions
+
+1. **Endurecer el Apps Script**: hoy cualquiera con la URL lee mails y fechas de todo el equipo. Recomiendo agregar
+   un `?token=` en el script (y guardarlo como env var); no bloquea este trabajo.
+2. **Mails alternativos** (riskified/gmail): quedan como "sin match" en el reporte. ¿Vale la pena una tabla de
+   alias de mails por recurso más adelante?
+3. **Vacaciones históricas cargadas a mano que se solapan** con filas de la hoja (p.ej. rangos unidos): el
+   sync no las toca; el preview las deja a la vista para limpiarlas a mano.
+4. **Frecuencia del cron**: diario por defecto; con plan Pro se puede subir (p.ej. cada hora).
+5. **Zona horaria**: se asume UTC-3 fijo (Argentina/Uruguay, sin horario de verano); el parser valida que todas
+   las fechas caigan a las 03:00Z y avisa si no.
