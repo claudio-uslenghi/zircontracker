@@ -1801,3 +1801,49 @@ Control de Horas.
 ## Open Questions
 
 Ninguna — pendiente solo terminar de diagnosticar el 401 contra el Apps Script real.
+
+---
+
+# Spec: Sync de vacaciones sin límite de año (incluir 2024 y 2025)
+
+## Objective
+
+El sync con Google Sheet solo traía vacaciones con `Starting` del año en curso en adelante (2026+),
+según la decisión original de esa spec. El usuario pidió sumar también 2025 y 2024 — en la práctica,
+toda la historia de la planilla, ya que la fila más antigua es de enero 2024.
+
+## Decisión
+
+Se saca el filtro de año por completo en `parseSheetRows()` (`lib/vacation-sync.ts`) — el sync ahora
+espeja **todas** las filas bien formadas de la hoja, sin piso de año. No se puso un año mínimo fijo
+(2024) porque no hay filas anteriores en la planilla y evita un número mágico a mantener.
+
+Se limpió además el código muerto que quedaba de esa restricción: el contador `skippedOld` (en
+`ParsedSheet`/`SyncOutcome`) y el parámetro `today`/`now` que solo se usaba para calcular el año en
+curso (`parseSheetRows`, `runVacationSync`) — ya no tenían otro propósito.
+
+## Impacto esperado
+
+Al ejecutar el próximo sync real van a aparecer como "a crear" las vacaciones de 2024/2025 que hoy no
+están en la base (ninguna importación anterior las trajo: ni el CSV manual, que también estaba
+acotado a 2026, ni este sync hasta ahora). El tope de borrado (`DELETE_CAP_ABSOLUTE`/`RATIO`) sigue
+igual — no aplica acá porque es una corrida de creación, no de borrado.
+
+## Testing Strategy
+
+`npx tsc --noEmit` + `npm run build` + dry-run real contra la planilla y la base (solo lectura) para
+confirmar que ahora entran filas de 2024/2025 en el plan de "a crear", sin tocar código de matching ni
+de borrado.
+
+## Boundaries
+
+- **Never**: aplicar el sync real sin que el usuario lo dispare desde el botón (o lo pida explícitamente).
+
+## Success Criteria
+
+1. El dry-run del sync incluye filas de 2024 y 2025, no solo 2026+.
+2. `npx tsc --noEmit` y `npm run build` pasan.
+
+## Open Questions
+
+Ninguna.

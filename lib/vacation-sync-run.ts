@@ -31,7 +31,6 @@ export interface SyncOutcome {
   unmatched: { email: string; rowNumbers: number[] }[]
   errors: SyncIssue[]
   warnings: string[]
-  skippedOld: number
   collapsed: number
   // Deletions were planned but held back (cron over the safety cap).
   deleteBlocked: boolean
@@ -86,7 +85,6 @@ function toOutcome(plan: SyncPlan, parsed: ReturnType<typeof parseSheetRows>, dr
     unmatched: plan.unmatched,
     errors: parsed.errors,
     warnings: parsed.warnings,
-    skippedOld: parsed.skippedOld,
     collapsed: parsed.collapsed,
     deleteBlocked,
   }
@@ -102,9 +100,8 @@ export async function runVacationSync(opts: {
   trigger: SyncTrigger
   // Manual runs may delete past the safety cap after explicit confirmation.
   allowLargeDeletes?: boolean
-  now?: Date
 }): Promise<SyncOutcome> {
-  const parsed = parseSheetRows(opts.rows, opts.now ?? new Date())
+  const parsed = parseSheetRows(opts.rows)
 
   const [resources, vacations] = await Promise.all([
     prisma.resource.findMany({ select: { id: true, name: true, email: true } }),

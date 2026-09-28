@@ -16,7 +16,7 @@ export const EXPECTED_HEADER = [
 const SHEET_OFFSET_MS = 3 * 60 * 60 * 1000
 const LOCAL_MIDNIGHT_SUFFIX = 'T03:00:00.000Z'
 
-// Mirrored rows are limited to the current year onwards.
+// Unattended runs never delete more than this many mirrored vacations at once.
 export const DELETE_CAP_ABSOLUTE = 10
 export const DELETE_CAP_RATIO = 0.2
 
@@ -55,7 +55,6 @@ export interface ParsedSheet {
   allKeys: Set<string>
   errors: SyncIssue[]
   warnings: string[]
-  skippedOld: number
   collapsed: number
 }
 
@@ -66,7 +65,7 @@ function toLocalDate(value: unknown): string | null {
   return new Date(t - SHEET_OFFSET_MS).toISOString().slice(0, 10)
 }
 
-export function parseSheetRows(rows: unknown, today: Date = new Date()): ParsedSheet {
+export function parseSheetRows(rows: unknown): ParsedSheet {
   if (!Array.isArray(rows) || rows.length < 2) {
     throw new SheetFormatError('La planilla no devolvió filas (respuesta vacía o con formato inesperado).')
   }
@@ -78,11 +77,9 @@ export function parseSheetRows(rows: unknown, today: Date = new Date()): ParsedS
     throw new SheetFormatError('El encabezado de la planilla no coincide con el esperado.')
   }
 
-  const currentYear = new Date(today.getTime() - SHEET_OFFSET_MS).getUTCFullYear()
   const errors: SyncIssue[] = []
   const allKeys = new Set<string>()
   const candidates: SheetEntry[] = []
-  let skippedOld = 0
   let offTimezone = 0
 
   for (let i = 1; i < rows.length; i++) {
@@ -105,10 +102,6 @@ export function parseSheetRows(rows: unknown, today: Date = new Date()): ParsedS
     }
     if (!String(startRaw).endsWith(LOCAL_MIDNIGHT_SUFFIX) || !String(endRaw).endsWith(LOCAL_MIDNIGHT_SUFFIX)) {
       offTimezone++
-    }
-    if (Number(startDate.slice(0, 4)) < currentYear) {
-      skippedOld++
-      continue
     }
     if (endDate < startDate) {
       errors.push({ rowNumber, email, message: `Fin (${endDate}) anterior al inicio (${startDate}) — se omite` })
@@ -148,7 +141,7 @@ export function parseSheetRows(rows: unknown, today: Date = new Date()): ParsedS
     warnings.push(`${offTimezone} fila(s) con fechas que no caen a medianoche UTC-3: revisá la zona horaria del script.`)
   }
 
-  return { entries: Array.from(byPeriod.values()), allKeys, errors, warnings, skippedOld, collapsed }
+  return { entries: Array.from(byPeriod.values()), allKeys, errors, warnings, collapsed }
 }
 
 export interface ResourceRef {
