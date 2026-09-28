@@ -3,6 +3,8 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import SearchableSelect from '@/components/ui/SearchableSelect'
+import InvoicesTable from '@/components/billing/InvoicesTable'
+import { toast } from '@/lib/toast'
 import {
   INVOICE_TEMPLATE,
   computeInvoice,
@@ -348,6 +350,7 @@ function BillingReport() {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error ?? 'Error al generar el archivo')
       }
+      const summary = res.headers.get('X-Invoice-Records-Summary')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -355,6 +358,15 @@ function BillingReport() {
       a.download = `invoicing-${pivot.month}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
+      if (summary) {
+        const created = Number(summary.match(/created=(\d+)/)?.[1] ?? 0)
+        const updated = Number(summary.match(/updated=(\d+)/)?.[1] ?? 0)
+        toast({
+          title: 'Facturas actualizadas',
+          description: `${created} registro${created !== 1 ? 's' : ''} nuevo${created !== 1 ? 's' : ''}, ${updated} actualizado${updated !== 1 ? 's' : ''}.`,
+          variant: 'success',
+        })
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
     } finally {
@@ -395,7 +407,7 @@ function BillingReport() {
             disabled={exporting}
             className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 text-sm"
           >
-            {exporting ? 'Generando archivo...' : 'Descargar .xlsx (2 hojas)'}
+            {exporting ? 'Generando facturas...' : 'Generar facturas del mes'}
           </button>
         </>
       )}
@@ -403,14 +415,41 @@ function BillingReport() {
   )
 }
 
+type Tab = 'generate' | 'invoices'
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'generate', label: 'Generar' },
+  { key: 'invoices', label: 'Facturas' },
+]
+
 export default function BillingPage() {
+  const [activeTab, setActiveTab] = useState<Tab>('generate')
+
   return (
-    <div className="p-4 sm:p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Facturación</h1>
         <p className="text-sm text-gray-500">Reportes mensuales para facturación e invoicing.</p>
       </div>
-      <BillingReport />
+
+      <div className="border-b border-gray-200 flex gap-1 overflow-x-auto">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            className={`px-3 sm:px-5 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+              activeTab === t.key
+                ? 'border-[#0170B9] text-[#0170B9]'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'generate' && <BillingReport />}
+      {activeTab === 'invoices' && <InvoicesTable />}
     </div>
   )
 }

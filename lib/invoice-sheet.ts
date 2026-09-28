@@ -272,6 +272,22 @@ export function computeInvoice(states: Record<string, LineState>): ComputedRow[]
   return rows
 }
 
+// The total billed to a client that month: by construction, the last
+// non-blank row of a block is always its grand total (the VAT-inclusive sum
+// for infogain, the post-discount total for infinite, the single line for
+// cash/smartway, etc.) — no separate "block total" concept needed elsewhere.
+export function getBlockTotals(rows: ComputedRow[]): { blockId: string; client: string; total: number }[] {
+  const clientById = new Map(INVOICE_TEMPLATE.map((b) => [b.id, b.client]))
+  const lastByBlock = new Map<string, number>()
+  for (const row of rows) {
+    if (!row.blockId || row.kind === 'blank' || row.total == null) continue
+    lastByBlock.set(row.blockId, row.total)
+  }
+  return Array.from(lastByBlock.entries()).map(([blockId, total]) => ({
+    blockId, client: clientById.get(blockId) ?? blockId, total,
+  }))
+}
+
 export interface XlsxCell {
   v?: string | number
   f?: string

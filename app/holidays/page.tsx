@@ -186,7 +186,9 @@ export default function HolidaysPage() {
 
       {view === 'calendar' && <HolidaysCalendar vacations={vacations} holidays={countryHolidays} />}
 
-      {view === 'totals' && <VacationTotals vacations={vacations} />}
+      {view === 'totals' && (
+        <VacationTotals vacations={isAdmin ? vacations : vacations.filter((v) => v.resourceId === myResource?.id)} />
+      )}
 
       {view === 'list' && (
       <>
