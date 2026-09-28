@@ -1,16 +1,17 @@
 'use client'
 
-import { useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
-import { eachDayOfInterval, isWeekend, parseISO, format } from 'date-fns'
-import { formatDate } from '@/lib/date-utils'
-import { Plus, Trash2, Upload, Download, Filter, Pencil, Search, RefreshCw, List, CalendarDays } from 'lucide-react'
+import { format } from 'date-fns'
+import { formatDate, countWorkingDays } from '@/lib/date-utils'
+import { Plus, Trash2, Upload, Download, Filter, Pencil, Search, RefreshCw, List, CalendarDays, BarChart3 } from 'lucide-react'
 import HolidayModal from '@/components/modals/HolidayModal'
 import VacationModal from '@/components/modals/VacationModal'
 import VacationCsvImportModal from '@/components/modals/VacationCsvImportModal'
 import VacationSyncModal from '@/components/modals/VacationSyncModal'
 import HolidaysCalendar from '@/components/holidays/HolidaysCalendar'
+import VacationTotals from '@/components/holidays/VacationTotals'
 import CsvImportModal from '@/components/modals/CsvImportModal'
 import Pagination from '@/components/ui/Pagination'
 import type { Resource, Vacation, CountryHoliday, SyncRunSummary } from '@/types'
@@ -23,10 +24,8 @@ function countryLabel(name: string) {
 }
 
 function calcWorkingDays(start: string, end: string) {
-  try {
-    const days = eachDayOfInterval({ start: parseISO(start), end: parseISO(end) })
-    return days.filter((d) => !isWeekend(d)).length
-  } catch { return '—' }
+  if (isNaN(new Date(start).getTime()) || isNaN(new Date(end).getTime())) return '—'
+  return countWorkingDays(start, end)
 }
 
 export default function HolidaysPage() {
@@ -39,7 +38,7 @@ export default function HolidaysPage() {
   const [showVacationCsvModal, setShowVacationCsvModal] = useState(false)
   const [showCsvModal, setShowCsvModal] = useState(false)
   const [filterCountry, setFilterCountry] = useState<string>('')
-  const [view, setView] = useState<'list' | 'calendar'>('list')
+  const [view, setView] = useState<'list' | 'calendar' | 'totals'>('list')
   const [showSyncModal, setShowSyncModal] = useState(false)
 
   const [vacationSearch, setVacationSearch] = useState('')
@@ -99,13 +98,24 @@ export default function HolidaysPage() {
     window.open(`/api/country-holidays/export${params}`, '_blank')
   }
 
+  // Upcoming vacations first (soonest on top), then past ones (most recent
+  // first) — "which vacations are coming up" is the whole point of this list.
+  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  const sortedVacations = useMemo(() => {
+    const upcoming = vacations.filter((v) => v.startDate.slice(0, 10) >= todayStr)
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+    const past = vacations.filter((v) => v.startDate.slice(0, 10) < todayStr)
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))
+    return [...upcoming, ...past]
+  }, [vacations, todayStr])
+
   // Filter vacations by resource name/email, then paginate client-side.
   const filteredVacations = vacationSearch.trim()
-    ? vacations.filter((v) => {
+    ? sortedVacations.filter((v) => {
         const q = vacationSearch.trim().toLowerCase()
         return v.resource?.name.toLowerCase().includes(q) || v.resource?.email?.toLowerCase().includes(q)
       })
-    : vacations
+    : sortedVacations
   const vacationTotalPages = Math.max(1, Math.ceil(filteredVacations.length / vacationPageSize))
   const vacationPageClamped = Math.min(vacationPage, vacationTotalPages)
   const pagedVacations = filteredVacations.slice(
@@ -142,7 +152,7 @@ export default function HolidaysPage() {
         <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Vacaciones & Feriados</h1>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5" role="group" aria-label="Vista">
-            {([['list', 'Lista', List], ['calendar', 'Calendario', CalendarDays]] as const).map(([key, label, Icon]) => (
+            {([['list', 'Lista', List], ['calendar', 'Calendario', CalendarDays], ['totals', 'Totales', BarChart3]] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
                 onClick={() => setView(key)}
@@ -175,6 +185,8 @@ export default function HolidaysPage() {
       )}
 
       {view === 'calendar' && <HolidaysCalendar vacations={vacations} holidays={countryHolidays} />}
+
+      {view === 'totals' && <VacationTotals vacations={vacations} />}
 
       {view === 'list' && (
       <>
@@ -331,7 +343,7 @@ export default function HolidaysPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {Object.entries(grouped).map(([country, holidays]) => (
-                  <>
+                  <Fragment key={country}>
                     {/* Country sub-header */}
                     <tr key={`header-${country}`} className="bg-gray-50">
                       <td colSpan={isAdmin ? 4 : 3} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -365,7 +377,7 @@ export default function HolidaysPage() {
                         )}
                       </tr>
                     ))}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
