@@ -1,5 +1,17 @@
-import { format } from 'date-fns'
+import { format, eachDayOfInterval, isWeekend, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
+
+/**
+ * Working days (Mon-Fri) between start and end, inclusive. Returns 0 for an
+ * invalid/empty range instead of throwing — safe to use in a reduce().
+ */
+export function countWorkingDays(start: string, end: string): number {
+  try {
+    return eachDayOfInterval({ start: parseISO(start), end: parseISO(end) }).filter((d) => !isWeekend(d)).length
+  } catch {
+    return 0
+  }
+}
 
 /**
  * Formats a date string safely without timezone shifting.

@@ -1710,3 +1710,94 @@ Sin suite automatizada; `npx tsc --noEmit` + `npm run build` + QA:
 4. **Frecuencia del cron**: diario por defecto; con plan Pro se puede subir (p.ej. cada hora).
 5. **Zona horaria**: se asume UTC-3 fijo (Argentina/Uruguay, sin horario de verano); el parser valida que todas
    las fechas caigan a las 03:00Z y avisa si no.
+
+---
+
+# Spec: Orden por fecha próxima, Totales por persona/año, fix del 401 del sync
+
+## Objective
+
+Tres pedidos sobre `/holidays` (lista, sync, y una vista nueva):
+
+1. La lista "Vacaciones programadas" debe ordenarse para que se vea fácil qué vacaciones vienen ahora.
+2. Una vista nueva con los totales de vacaciones por persona y por año.
+3. El botón "Sincronizar con Google Sheet" está roto en producción (HTTP 401 al leer la planilla).
+
+## Hallazgos clave
+
+- **Orden actual**: `GET /api/vacations` ya ordena `startDate: 'asc'` — pero es ascendente puro, así que
+  vacaciones viejas (2024, 2025) quedan arriba de todo, tapando lo que viene. No es "sin orden", es el orden
+  equivocado para el caso de uso ("qué se viene").
+- **Ítem 3 (401)**: el mensaje `"La planilla respondió HTTP 401."` sale del propio código
+  (`lib/vacation-sync-run.ts`, `fetchSheetRows()`) solo cuando `VACATIONS_SHEET_URL` **sí** está configurada en
+  Vercel pero el Apps Script devuelve 401 — o sea, no es un bug de ZirconTracker, es que Google está rechazando
+  la request. Causas más probables, a confirmar contra el Apps Script real:
+  1. La URL cargada en la env var de Vercel no es exactamente la misma que quedó funcionando en `.env.local`
+     (typo, o un redeploy del Apps Script generó una URL nueva sin actualizar Vercel).
+  2. El deployment de Apps Script perdió el acceso "Cualquier usuario" / necesita reautorizarse (pasa cuando se
+     edita el script después de haberlo desplegado, o cuando expira el token de autorización).
+- Ya existe el patrón de tabla pivot Recurso×columna (`app/admin/billing/page.tsx`, `lib/invoicing-report.ts`) y
+  de gráficos Recharts (`app/admin/control-horas/page.tsx`) para reutilizar en el ítem 2.
+- `calcWorkingDays` (en `app/holidays/page.tsx`) ya calcula días hábiles entre `startDate`/`endDate`, sin medio
+  día — el total por persona/año necesita la misma lógica pero restando 0.5 cuando `halfDay` es true.
+
+## Decisiones confirmadas con el usuario
+
+1. **Orden de la lista**: vacaciones futuras (`startDate >= hoy`) primero, ascendente (la más próxima arriba);
+   después las pasadas, descendente (la más reciente primero). No se ocultan las pasadas, solo quedan al final.
+2. **Totales por persona/año**: días hábiles, restando 0.5 por cada tramo de medio día, **solo tipo
+   "Vacation / Day Off"** — Sick Day y Birthday se muestran aparte (no se suman al total de vacaciones).
+3. **Visualización**: tabla Persona×Año (mismo patrón que el pivot de Facturación) + un gráfico de barras del
+   año seleccionado arriba, para detectar outliers de un vistazo (mismo estilo Recharts que Control de Horas).
+4. **Ubicación**: tercer botón junto a `Lista | Calendario` → `Lista | Calendario | Totales`.
+5. **Fix del 401**: diagnosticar contra el Apps Script real y corregir la env var de Vercel y/o el deployment
+   según lo que se encuentre — no se toca el código de `fetchSheetRows()` salvo que el diagnóstico muestre que
+   hace falta (p.ej. seguir un redirect, mandar un header distinto).
+
+## Tech Stack
+
+Mismo stack de siempre: Next.js 14, TypeScript, Prisma, Recharts (ya instalado), `SearchableSelect`.
+
+## Project Structure
+
+- `app/holidays/page.tsx`: nuevo comparador para la lista (futuras asc, pasadas desc) aplicado client-side
+  sobre lo que ya trae `GET /api/vacations`; nuevo botón "Totales" en el toggle de vista, junto a
+  `Lista`/`Calendario`.
+- `components/holidays/VacationTotals.tsx` (nuevo): selector de año, bar chart (Recharts) del año elegido, y
+  tabla Persona×Año con los días hábiles de vacaciones. Cálculo 100% client-side sobre los `vacations` que la
+  página ya carga — sin endpoint nuevo.
+- Diagnóstico del 401: sin archivo nuevo hasta confirmar la causa; posible ajuste en `lib/vacation-sync-run.ts`
+  (`fetchSheetRows`) si el problema es de la request (redirect, headers), o ninguno si es solo la env var/deployment.
+
+## Code Style
+
+Reutilizar `calcWorkingDays` (extraerla a un helper compartido si hace falta usarla también en
+`VacationTotals.tsx`), el patrón de tabla pivot ya usado en Facturación, y el estilo de gráficos ya usado en
+Control de Horas.
+
+## Testing Strategy
+
+`npx tsc --noEmit` + `npm run build` + QA manual:
+- Lista: con vacaciones pasadas y futuras mezcladas, confirmar que las futuras aparecen primero (ascendente) y
+  las pasadas después (descendente).
+- Totales: un año con datos reales, confirmar que la tabla y el chart coinciden, que medio día resta 0.5, y que
+  Sick Day/Birthday no entran en el total.
+- Sync: una vez diagnosticado el 401, confirmar que el botón "Sincronizar" funciona en producción (o al menos
+  en un entorno de prueba contra el Apps Script real).
+
+## Boundaries
+
+- **Never**: tocar la lógica de `lib/vacation-sync.ts` (parseo/plan) salvo que el diagnóstico del 401 lo
+  requiera explícitamente.
+- **Ask first**: cualquier cambio a la configuración del Apps Script en sí (eso lo hace el usuario en Google).
+
+## Success Criteria
+
+1. La lista muestra primero las vacaciones que vienen, después las pasadas.
+2. `Lista | Calendario | Totales` con la tabla + gráfico funcionando con datos reales.
+3. El botón "Sincronizar con Google Sheet" funciona en producción sin 401.
+4. `npx tsc --noEmit` y `npm run build` pasan.
+
+## Open Questions
+
+Ninguna — pendiente solo terminar de diagnosticar el 401 contra el Apps Script real.
