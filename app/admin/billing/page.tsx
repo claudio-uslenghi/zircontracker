@@ -4,11 +4,12 @@ import { useMemo, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import InvoicesTable from '@/components/billing/InvoicesTable'
+import InvoiceBlocksConfig from '@/components/billing/InvoiceBlocksConfig'
 import { toast } from '@/lib/toast'
 import {
-  INVOICE_TEMPLATE,
   computeInvoice,
   hoursToQty,
+  type InvoiceBlockDef,
   type LineState,
 } from '@/lib/invoice-sheet'
 
@@ -45,6 +46,7 @@ interface InvoicingPreview {
 
 interface InvoiceSheetData {
   month: string
+  blocks: InvoiceBlockDef[]
   blockProjects: Record<string, string | null>
   lineDefaults: Record<string, string | null>
   hours: Record<string, Record<string, number>>
@@ -54,7 +56,7 @@ interface InvoiceSheetData {
 
 function buildInitialStates(data: InvoiceSheetData): Record<string, LineState> {
   const states: Record<string, LineState> = {}
-  for (const block of INVOICE_TEMPLATE) {
+  for (const block of data.blocks) {
     const project = data.blockProjects[block.id]
     for (const item of block.items) {
       if (item.type === 'line') {
@@ -152,8 +154,8 @@ function InvoiceSection({
   states: Record<string, LineState>
   setStates: (updater: (prev: Record<string, LineState>) => Record<string, LineState>) => void
 }) {
-  const rows = useMemo(() => computeInvoice(states), [states])
-  const blockById = useMemo(() => new Map(INVOICE_TEMPLATE.map((b) => [b.id, b])), [])
+  const rows = useMemo(() => computeInvoice(data.blocks, states), [data.blocks, states])
+  const blockById = useMemo(() => new Map(data.blocks.map((b) => [b.id, b])), [data.blocks])
   const personOptions = useMemo(
     () => [{ value: '', label: '— Sin persona —' }, ...data.resourceNames.map((n) => ({ value: n, label: n }))],
     [data.resourceNames]
@@ -415,11 +417,12 @@ function BillingReport() {
   )
 }
 
-type Tab = 'generate' | 'invoices'
+type Tab = 'generate' | 'invoices' | 'config'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'generate', label: 'Generar' },
   { key: 'invoices', label: 'Facturas' },
+  { key: 'config', label: 'Configurar clientes' },
 ]
 
 export default function BillingPage() {
@@ -450,6 +453,7 @@ export default function BillingPage() {
 
       {activeTab === 'generate' && <BillingReport />}
       {activeTab === 'invoices' && <InvoicesTable />}
+      {activeTab === 'config' && <InvoiceBlocksConfig />}
     </div>
   )
 }

@@ -8,7 +8,8 @@ import { computeInvoiceStatus } from '@/lib/invoice-records'
 // Lists every ClientInvoice record with Outstanding/Outstanding days/status
 // computed on the fly (never stored — see lib/invoice-records.ts). Filtering
 // and sorting happen client-side; the table is small enough not to need
-// server-side pagination yet.
+// server-side pagination yet. Also returns every InvoiceBlock (active AND
+// hidden) so the UI can label a historical row whose client was since hidden.
 export async function GET() {
   try {
     await requireAdmin()
@@ -16,11 +17,16 @@ export async function GET() {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const records = await prisma.clientInvoice.findMany({ orderBy: [{ month: 'desc' }, { customer: 'asc' }] })
+  const [records, blocks] = await Promise.all([
+    prisma.clientInvoice.findMany({ orderBy: [{ month: 'desc' }, { customer: 'asc' }] }),
+    prisma.invoiceBlock.findMany({ select: { slug: true, client: true, paymentTermDays: true } }),
+  ])
+  const blockBySlug = new Map(blocks.map((b) => [b.slug, b]))
 
   const rows = records.map((r) => {
+    const termDays = blockBySlug.get(r.blockId)?.paymentTermDays ?? 30
     const computed = computeInvoiceStatus({
-      blockId: r.blockId, billed: r.billed, paid: r.paid, dateInv: r.dateInv, datePaid: r.datePaid,
+      termDays, billed: r.billed, paid: r.paid, dateInv: r.dateInv, datePaid: r.datePaid,
     })
     return {
       id: r.id,
@@ -41,5 +47,8 @@ export async function GET() {
     }
   })
 
-  return NextResponse.json({ rows })
+  return NextResponse.json({
+    rows,
+    blocks: blocks.map((b) => ({ blockId: b.slug, client: b.client })),
+  })
 }

@@ -22,6 +22,7 @@ model Resource {
   vacations     Vacation[]
   timeEntries   TimeEntry[]
   resourceRates ProjectResourceRate[]
+  invoiceLines  InvoiceLineDef[]
 }
 
 model Project {
@@ -43,6 +44,7 @@ model Project {
   timeEntries   TimeEntry[]
   resourceRates ProjectResourceRate[]
   tasks         Task[]
+  invoiceBlocks InvoiceBlock[]
 }
 
 model Assignment {
@@ -194,6 +196,52 @@ model ClientInvoice {
   updatedAt   DateTime  @updatedAt
 
   @@unique([month, blockId])
+}
+
+model InvoiceBlock {
+  id              Int      @id @default(autoincrement())
+  slug            String   @unique
+  client          String
+  customerName    String
+  active          Boolean  @default(true)
+  order           Int
+  header          Boolean  @default(true)
+  okMark          Boolean  @default(false)
+  priceLabel      String   @default("Precio")
+  qtyLabel        String   @default("Horas")
+  unit            String   @default("hours")
+  projectId       Int?
+  paymentTermDays Int      @default(30)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  items   InvoiceLineDef[]
+}
+
+model InvoiceLineDef {
+  id          Int      @id @default(autoincrement())
+  blockId     Int
+  refSlug     String
+  order       Int
+  type        String
+  label       String   @default("")
+  rate        Float?
+  rateFormula String?
+  hasPerson   Boolean  @default(false)
+  resourceId  Int?
+  qtyDefault  Float    @default(0)
+  comment     String   @default("")
+  refs        String   @default("")
+  factor      Float?
+  qtyIsSum    Boolean  @default(false)
+  avgRate     Boolean  @default(false)
+
+  block    InvoiceBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  resource Resource?    @relation(fields: [resourceId], references: [id], onDelete: SetNull)
+
+  @@unique([blockId, refSlug])
+  @@unique([blockId, order])
 }
 
 model ProjectResourceRate {

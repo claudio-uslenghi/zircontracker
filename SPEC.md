@@ -2096,3 +2096,250 @@ en todo endpoint de escritura o lectura de facturas.
    (`Infogain`/`Infinite`/`Hover`/`Suku`/`IMOUY`) como placeholder en `Customer` — por eso lo dejo
    editable desde la vista Facturas, para poder corregirlo a mano sin otro deploy.
 3. **Nombre del botón**: propongo "Generar facturas del mes" — avisame si preferís otro texto.
+
+---
+
+## Facturas por cliente: proyectos y líneas dinámicos
+
+### Objective
+
+Hoy los 10 bloques de "Facturas por cliente" (Infogain, Infinite, Hover, Suku, IMOUY, Ideal
+Protein, Cash, Smartway, MOB, Claldy) son código fijo (`INVOICE_TEMPLATE` en
+`lib/invoice-sheet.ts`) — para agregar un cliente nuevo o borrar uno (ej. Infinite) hay que tocar
+código y desplegar. El pedido es que un admin pueda, desde la UI:
+
+1. Agregar un proyecto/cliente nuevo a facturar.
+2. Eliminar (ocultar) un proyecto existente, ej. Infinite.
+3. Dentro de cada proyecto, agregar/quitar/editar sus líneas (recurso, precio por hora, etc.).
+
+Esto implica migrar `INVOICE_TEMPLATE` de un array fijo en código a datos en la base, manteniendo
+el motor de cálculo (`computeInvoice`) y la fidelidad de los cálculos especiales que ya existen
+(IVA de Infogain, descuento 20% de Infinite, fórmula de hiring fee de Suku, tarifa promedio de
+Hover).
+
+**Nota de alcance**: este es un cambio bastante más grande que los anteriores de esta sesión — toca
+el motor de cálculo central de facturación, no solo una vista. Lo trato como tal: primero migro el
+template a la base sin cambiar ningún total real (verificado 1:1 contra el cálculo actual), recién
+después construyo la UI de alta/edición sobre esa base ya migrada.
+
+### Decisiones confirmadas con el usuario
+
+1. **Fidelidad de la migración**: migración completa — los 10 bloques pasan a la base tal cual,
+   con soporte para los 4 tipos de línea que ya existen (`line`, `sum`, `vat`, `discount`), no solo
+   líneas simples. Ningún cliente pierde su cálculo real actual (IVA, descuento, hiring fee,
+   tarifa promedio).
+2. **Eliminar un proyecto**: no se borra — se **oculta** (`active = false`). Desaparece de la
+   generación de meses futuros, pero sus `ClientInvoice` históricos siguen mostrando su nombre
+   correcto en el tab Facturas, y se puede reactivar después. Un borrado permanente solo se permite
+   si el bloque **nunca** generó un `ClientInvoice` (para no dejar historial huérfano).
+3. **Origen de horas de un proyecto nuevo**: a elección por bloque — al crearlo, el admin decide si
+   lo vincula a un `Project` real de la base (las horas se autocompletan por recurso, como
+   Infogain/Suku/Ideal Protein hoy) o lo deja manual (como Infinite/Hover/Cash hoy, cantidad a mano
+   cada mes).
+4. **Ubicación de la gestión**: un tab nuevo **"Configurar clientes"** en `/admin/billing`
+   (separado de "Generar" y "Facturas") — ahí se administran bloques/líneas de una vez; el flujo
+   mensual de generación no cambia, solo lee lo que esté activo.
+
+### Hallazgos clave (solo lectura)
+
+- `INVOICE_TEMPLATE: InvoiceBlockDef[]` (`lib/invoice-sheet.ts:51-148`): 10 bloques, cada uno con
+  `items: InvoiceItemDef[]` — unión discriminada `text | blank | line | sum | vat | discount`. Los
+  `sum`/`vat`/`discount` referencian otras líneas del mismo bloque por su `id` string (ej.
+  `over: ['infinite-alejandro', 'infinite-gonzalo', 'infinite-federico']`), y solo pueden referenciar
+  líneas que aparecen **antes** en el array (el motor de cálculo es un solo pase, de arriba hacia
+  abajo, acumulando en un `Map` por `id`).
+- `computeInvoice(states)` (`lib/invoice-sheet.ts:194-273`) itera `INVOICE_TEMPLATE` como constante
+  de módulo — para parametrizarlo hay que pasarle el template como argumento en vez de cerrarlo
+  sobre la constante global. Mismo cambio en `getBlockTotals(rows)` (ya usa `INVOICE_TEMPLATE` para
+  resolver `client` por `blockId`).
+- `app/admin/billing/page.tsx` importa `INVOICE_TEMPLATE` directo en el bundle del cliente
+  (`buildInitialStates`, `InvoiceSection`) — al migrar a datos dinámicos, el cliente ya no puede
+  importar la constante; tiene que recibir el template resuelto desde el server (extender lo que ya
+  devuelve `GET /api/reports/invoice-sheet`, que hoy ya arma `blockProjects`/`lineDefaults`/`hours`
+  a partir del template).
+- `ClientInvoice.blockId` (PR #35, recién mergeado) es un string suelto, sin FK — no se rompe si un
+  bloque se oculta u borra, pero el nombre que se muestra en el tab Facturas para filas históricas
+  hoy sale de `INVOICE_TEMPLATE.find(blockId)` (`components/billing/InvoicesTable.tsx`,
+  `clientByBlockId`) — al migrar, ese lookup tiene que seguir resolviendo bloques inactivos/borrados
+  (no solo los activos), para no degradar filas viejas.
+- `CLIENT_PAYMENT_TERM_DAYS`/`CLIENT_DISPLAY_NAME` (`lib/invoice-records.ts`) hoy son mapas fijos
+  por `blockId` — pasan a ser columnas del nuevo `InvoiceBlock` (`paymentTermDays`, `customerName`),
+  la fuente de verdad deja de ser código.
+
+### Diseño
+
+#### 1. Modelo de datos
+
+```prisma
+model InvoiceBlock {
+  id              Int      @id @default(autoincrement())
+  slug            String   @unique   // reemplaza el "id" string fijo de hoy (mob, claldy, ...)
+  client          String             // nombre mostrado en el header del bloque, ej. "Infogain"
+  customerName    String             // nombre legal para el campo Customer de ClientInvoice
+  active          Boolean  @default(true)
+  order           Int
+  header          Boolean  @default(true)
+  okMark          Boolean  @default(false)
+  priceLabel      String   @default("Precio")
+  qtyLabel        String   @default("Horas")
+  unit            String   @default("hours")  // 'hours' | 'days'
+  projectId       Int?               // null = cantidades manuales
+  paymentTermDays Int      @default(30)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  items   InvoiceLineDef[]
+}
+
+model InvoiceLineDef {
+  id         Int      @id @default(autoincrement())
+  blockId    Int
+  refSlug    String             // clave estable dentro del bloque (ej. "infogain-luciana"),
+                                 // usada por sum/vat/discount para referenciar esta fila
+  order      Int
+  type       String             // 'text' | 'blank' | 'line' | 'sum' | 'vat' | 'discount'
+  label      String   @default("")
+  rate       Float?
+  rateFormula String?
+  resourceId Int?
+  qtyDefault Float    @default(0)
+  comment    String   @default("")
+  refs       String   @default("")  // refSlugs separados por coma (sum.over / vat.of / discount.from)
+  factor     Float?             // vat.factor o discount.rate
+  qtyIsSum   Boolean  @default(false)
+  avgRate    Boolean  @default(false)
+
+  block    InvoiceBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  resource Resource?    @relation(fields: [resourceId], references: [id], onDelete: SetNull)
+
+  @@unique([blockId, refSlug])
+  @@unique([blockId, order])
+}
+```
+
+Migración idempotente (`scripts/add-invoice-blocks.ts`, mismo patrón que el resto del repo) que:
+1. Crea las tablas.
+2. **Semilla los 10 bloques actuales 1:1** desde `INVOICE_TEMPLATE` — resuelve `projectLookup`
+   (primer candidato que matchee un `Project` real) y cada `person` contra `Resource` real, igual
+   que hace hoy `buildInitialStates` en runtime.
+3. Antes de borrar `INVOICE_TEMPLATE` del código, corro una verificación: generar el mismo mes real
+   con el motor viejo (constante) y el nuevo (datos migrados) y comparar los `ComputedRow[]`
+   resultantes celda a celda — cero diferencias antes de seguir. Si hay una sola diferencia, no se
+   continúa hasta corregir la migración.
+
+#### 2. Motor de cálculo
+
+`computeInvoice(template: InvoiceBlockDef[], states)` — mismo cuerpo, ahora recibe el template como
+parámetro en vez de cerrar sobre la constante. `getBlockTotals(template, rows)` idem.
+`lib/invoice-template.ts` (nuevo): `getInvoiceTemplate({ activeOnly }): Promise<InvoiceBlockDef[]>`
+— lee `InvoiceBlock`+`InvoiceLineDef` de la base y arma el mismo shape `InvoiceBlockDef[]` que hoy
+da `INVOICE_TEMPLATE`, para que `computeInvoice` no note la diferencia.
+
+#### 3. Endpoints nuevos (todos `requireAdmin()`)
+
+- `GET /api/admin/invoice-blocks` — lista bloques (activos e inactivos) con sus líneas.
+- `POST /api/admin/invoice-blocks` — crea un bloque nuevo (sin líneas todavía).
+- `PATCH /api/admin/invoice-blocks/[id]` — edita metadata, reordena, o togglea `active`.
+- `DELETE /api/admin/invoice-blocks/[id]` — solo si no tiene ningún `ClientInvoice` histórico
+  (`prisma.clientInvoice.count({ where: { blockId: slug } })`); si tiene, error 409 sugiriendo
+  ocultar en vez de borrar.
+- `POST /api/admin/invoice-blocks/[id]/items` — agrega una línea.
+- `PATCH /api/admin/invoice-blocks/[id]/items/[itemId]` — edita una línea.
+- `DELETE /api/admin/invoice-blocks/[id]/items/[itemId]` — borra una línea; error 409 si otra línea
+  la referencia en `refs` (hay que borrar/editar esa referencia primero).
+
+`GET /api/reports/invoice-sheet` y `POST /api/reports/invoicing/export` pasan a usar
+`getInvoiceTemplate({ activeOnly: true })` en vez de importar la constante; el primero además
+devuelve el template resuelto en la respuesta para que el cliente (`app/admin/billing/page.tsx`) ya
+no necesite importar `INVOICE_TEMPLATE`.
+
+`components/billing/InvoicesTable.tsx` — `clientByBlockId` pasa a resolverse contra
+`getInvoiceTemplate({ activeOnly: false })` (todos, incluidos los ocultos/borrados-imposibles) vía
+un endpoint liviano o incluido en `GET /api/invoices`, para que facturas históricas de un cliente
+oculto sigan mostrando su nombre.
+
+#### 4. UI — tab "Configurar clientes"
+
+`app/admin/billing/page.tsx` gana un tercer tab. Nueva página
+`components/billing/InvoiceBlocksConfig.tsx`:
+
+- Lista de bloques activos (arriba) y ocultos (abajo, atenuados), reordenables.
+- **"+ Nuevo proyecto"**: modal con cliente, nombre legal (Customer), proyecto vinculado
+  (`SearchableSelect` de `Project`, opcional) o "manual", `priceLabel`/`qtyLabel`/unidad
+  (horas/días), término de pago en días.
+- Por bloque: "Ocultar" / "Reactivar"; "Eliminar" habilitado solo si no tiene historial (si no,
+  deshabilitado con tooltip explicando por qué).
+- Por bloque, expandible, gestión de líneas — selector de tipo al agregar una línea:
+  - **Línea simple**: label, persona (`SearchableSelect` de `Resource`, opcional), precio,
+    cantidad por defecto.
+  - **Subtotal (suma)**: label, selección múltiple de líneas anteriores del mismo bloque a sumar,
+    checkboxes "sumar también cantidad" y "mostrar tarifa promedio".
+  - **IVA**: label, qué subtotal anterior toma como base, factor (ej. 1.22).
+  - **Descuento**: label, qué total anterior reduce, porcentaje.
+  - Reordenar (subir/bajar) y borrar cada línea (bloqueado si algo más la referencia).
+
+### Project Structure
+
+```
+prisma/schema.prisma                    — + InvoiceBlock, InvoiceLineDef
+scripts/add-invoice-blocks.ts           — nuevo: crea tablas + siembra los 10 bloques actuales
+lib/invoice-template.ts                 — nuevo: getInvoiceTemplate({ activeOnly })
+lib/invoice-sheet.ts                    — INVOICE_TEMPLATE se borra; computeInvoice/getBlockTotals
+                                           reciben el template como parámetro
+lib/invoice-records.ts                  — CLIENT_PAYMENT_TERM_DAYS/CLIENT_DISPLAY_NAME se borran
+                                           (pasan a columnas de InvoiceBlock)
+app/api/admin/invoice-blocks/route.ts   — nuevo: GET, POST
+app/api/admin/invoice-blocks/[id]/route.ts — nuevo: PATCH, DELETE
+app/api/admin/invoice-blocks/[id]/items/route.ts — nuevo: POST
+app/api/admin/invoice-blocks/[id]/items/[itemId]/route.ts — nuevo: PATCH, DELETE
+app/api/reports/invoice-sheet/route.ts  — usa getInvoiceTemplate() en vez de la constante
+app/api/reports/invoicing/export/route.ts — idem
+app/api/invoices/route.ts               — clientByBlockId incluye bloques inactivos
+app/admin/billing/page.tsx              — + tab "Configurar clientes"; ya no importa INVOICE_TEMPLATE
+components/billing/InvoiceBlocksConfig.tsx — nuevo
+components/billing/InvoicesTable.tsx    — clientByBlockId contra el endpoint dinámico
+```
+
+### Code Style
+
+Mismo patrón del repo: lógica pura separada de la ruta API, `requireAdmin()` en todo endpoint de
+escritura, migraciones idempotentes vía script + `prisma generate` (nunca `db push`/`migrate`).
+
+### Testing Strategy
+
+- `npx tsc --noEmit` y `npm run build`.
+- **Verificación de la migración antes que nada más**: generar un mes real con el motor viejo
+  (constante) vs. el nuevo (datos migrados) y diff celda a celda — cero diferencias.
+- QA manual con datos descartables contra la Turso real: crear un proyecto nuevo vinculado a un
+  Project real, agregar 2 líneas, generar un mes y confirmar que las horas se autocompletan;
+  ocultar Infinite, confirmar que desaparece de la próxima generación pero un `ClientInvoice`
+  histórico de Infinite sigue mostrando su nombre en el tab Facturas; intentar borrar Infinite
+  (debe bloquearse, tiene historial) vs. borrar el proyecto de prueba recién creado sin generar
+  ninguna factura (debe permitirse); borrar una línea referenciada por un subtotal (debe
+  bloquearse).
+- Limpiar todos los fixtures descartables al terminar.
+
+### Boundaries
+
+- No se cambia ningún total real de un mes ya facturado — la migración se verifica 1:1 antes de
+  borrar `INVOICE_TEMPLATE`.
+- `INVOICE_TEMPLATE` no se borra del código hasta que la migración esté verificada y el resto del
+  código migrado a leer de la base.
+- Un bloque con historial (`ClientInvoice`) nunca se borra de verdad, solo se oculta.
+
+### Success Criteria
+
+- Un admin puede crear un cliente nuevo (vinculado a un Project o manual) y facturarlo el mismo mes,
+  sin tocar código ni desplegar.
+- Ocultar Infinite lo saca de la generación futura sin romper sus facturas históricas.
+- Las líneas de cualquier bloque (simples, subtotales, IVA, descuento) son editables desde la UI,
+  con el mismo resultado numérico que el sistema actual para los 10 clientes existentes.
+
+### Open Questions
+
+Ninguna pendiente — las 4 decisiones de alcance quedaron confirmadas arriba. Dado el tamaño del
+cambio, antes de tocar la UI voy a migrar el template a la base y verificar que no cambia ningún
+número, y recién ahí avanzo con los endpoints y la pantalla de configuración — si preferís que lo
+parta en dos PRs (1: migración del motor sin cambios visibles; 2: UI de alta/edición) avisame,
+si no lo hago todo junto como el resto de esta sesión.

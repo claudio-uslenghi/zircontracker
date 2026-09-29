@@ -5,7 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { INVOICING_PROJECT_ORDER, INVOICING_RESOURCE_ORDER, resolveInvoicingOrder } from '@/lib/invoicing-report'
 import { computeInvoice, computedRowsToCells, getBlockTotals, type LineState } from '@/lib/invoice-sheet'
-import { CLIENT_DISPLAY_NAME, lastDayOfMonth } from '@/lib/invoice-records'
+import { getInvoiceTemplate } from '@/lib/invoice-template'
+import { lastDayOfMonth } from '@/lib/invoice-records'
 
 // Generates the final .xlsx for the monthly "Info para invoicing" report,
 // scoped to exactly the resource/project labels the admin confirmed in the
@@ -84,7 +85,8 @@ export async function POST(req: NextRequest) {
   const invoiceLines: Record<string, LineState> | undefined = body.invoiceLines
   let recordsSummary = ''
   if (invoiceLines) {
-    const computedRows = computeInvoice(invoiceLines)
+    const template = await getInvoiceTemplate({ activeOnly: true })
+    const computedRows = computeInvoice(template, invoiceLines)
     const cells = computedRowsToCells(computedRows)
     const sheet: Record<string, unknown> = {}
     cells.forEach((rowCells, r) => {
@@ -102,7 +104,11 @@ export async function POST(req: NextRequest) {
     // Generate/update one ClientInvoice record per client with Total > 0 this
     // month. Regenerating never touches billed/paid/datePaid/comments/customer/
     // description/dateInv once a record exists — only `total` is refreshed.
-    const blockTotals = getBlockTotals(computedRows).filter((b) => b.total > 0)
+    const blockTotals = getBlockTotals(template, computedRows).filter((b) => b.total > 0)
+    const customerNameBySlug = new Map(
+      (await prisma.invoiceBlock.findMany({ where: { slug: { in: blockTotals.map((b) => b.blockId) } }, select: { slug: true, customerName: true } }))
+        .map((b) => [b.slug, b.customerName])
+    )
     const existing = await prisma.clientInvoice.findMany({
       where: { month, blockId: { in: blockTotals.map((b) => b.blockId) } },
       select: { blockId: true },
@@ -115,7 +121,7 @@ export async function POST(req: NextRequest) {
         prisma.clientInvoice.upsert({
           where: { month_blockId: { month, blockId: b.blockId } },
           create: {
-            month, blockId: b.blockId, customer: CLIENT_DISPLAY_NAME[b.blockId] ?? b.client,
+            month, blockId: b.blockId, customer: customerNameBySlug.get(b.blockId) ?? b.client,
             total: b.total, billed: b.total, dateInv,
           },
           update: { total: b.total },

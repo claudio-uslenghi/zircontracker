@@ -45,107 +45,12 @@ export const INVOICE_TITLE_ROWS = [
   'Servicios exonerados literal S Art 66 T4 T.O 2023',
 ]
 
-const ART66 = 'Servicios exonerados literal S Art 66 T4 T.O 2023'
-const ART52 = 'Servicios exonerados literal S artículo 52 Titulo 4'
-
-export const INVOICE_TEMPLATE: InvoiceBlockDef[] = [
-  {
-    id: 'infogain', client: 'Infogain', header: true, okMark: true, priceLabel: 'Precio', qtyLabel: 'Horas',
-    unit: 'hours', projectLookup: ['Infogain'],
-    items: [
-      { type: 'line', id: 'infogain-luciana', label: `${ART66} - Salesforce Analyst - Luciana Diniz Gonçalves dos Santos`, rate: 40, person: 'Luciana Diniz', comment: 'Sin iva, hay que sumar iva.' },
-      { type: 'line', id: 'infogain-victor', label: `${ART66} - Power BI Analyst - Victor Córdoba`, rate: 33, person: 'Victor Cordoba', comment: 'Sin iva, hay que sumar iva.' },
-      { type: 'blank' },
-      { type: 'sum', id: 'infogain-sub', label: ART52, over: ['infogain-luciana', 'infogain-victor'], comment: 'Sin iva' },
-      { type: 'vat', id: 'infogain-vat', label: `${ART52} - Software dev`, of: 'infogain-sub', factor: 1.22, comment: 'IVA incluído' },
-    ],
-  },
-  {
-    id: 'infinite', client: 'Infinite', header: true, okMark: false, priceLabel: 'Precio', qtyLabel: 'Horas',
-    unit: 'hours', projectLookup: null,
-    items: [
-      { type: 'line', id: 'infinite-alejandro', label: 'Alejandro Barrios', rate: 55, person: 'Alejandro Barrios' },
-      { type: 'line', id: 'infinite-gonzalo', label: 'Gonzalo Torterolo', rate: 55, person: 'Gonzalo Torterolo' },
-      { type: 'line', id: 'infinite-federico', label: 'Federico Alvarez', rate: 55, person: 'Federico Alvarez' },
-      { type: 'sum', id: 'infinite-dev', label: 'Total Development', over: ['infinite-alejandro', 'infinite-gonzalo', 'infinite-federico'], qty: true },
-      { type: 'blank' },
-      { type: 'line', id: 'infinite-luz', label: 'Luz Gutierrez', rate: 28, person: 'Luz Gutierrez' },
-      { type: 'sum', id: 'infinite-testing', label: 'Total Testing', over: ['infinite-luz'] },
-      { type: 'blank' },
-      { type: 'sum', id: 'infinite-total', label: 'Total General', over: ['infinite-testing', 'infinite-dev'] },
-      { type: 'blank' },
-      { type: 'discount', id: 'infinite-discount', label: 'Descuento', from: 'infinite-total', rate: 20 },
-    ],
-  },
-  {
-    id: 'hover', client: 'Hover', header: false, okMark: false, priceLabel: 'Precio', qtyLabel: 'Horas',
-    unit: 'hours', projectLookup: null,
-    items: [
-      { type: 'line', id: 'hover-title', label: 'Hover', rate: 45, comment: 'March ok' },
-      { type: 'line', id: 'hover-ismael', label: 'Ismael Francisco', rate: 45, person: 'ifrancisco' },
-      { type: 'line', id: 'hover-design', label: 'Diseño', rate: 45 },
-      { type: 'sum', id: 'hover-total', label: '', over: ['hover-ismael', 'hover-design'], qty: true, avgRate: true },
-    ],
-  },
-  {
-    id: 'suku', client: 'Suku', header: true, okMark: true, priceLabel: 'Precio', qtyLabel: 'Horas',
-    unit: 'hours', projectLookup: ['Suku 2024'],
-    items: [
-      { type: 'line', id: 'suku-abdulelah', label: `${ART66} - Software development hours - Abdulelah`, rate: 45, person: 'Abdulelah Ragih' },
-      { type: 'line', id: 'suku-gonzalo', label: `${ART66} - Software development hours - Gonzalo T`, rate: 45, person: 'Gonzalo Torterolo' },
-      { type: 'line', id: 'suku-luz', label: `${ART66} - Manual testing hours - Luz`, rate: 25, person: 'Luz Gutierrez' },
-      { type: 'line', id: 'suku-rodrigo', label: `${ART66} - Automated testing hours - Rodrigo`, rate: 35, person: 'rgomez' },
-      { type: 'line', id: 'suku-hiring', label: `${ART66} - Hiring fee`, rate: 3750, rateFormula: '5000*1.5/2', qtyDefault: 0, comment: 'Ajustarlo según salario real' },
-      { type: 'sum', id: 'suku-total', label: '', over: ['suku-abdulelah', 'suku-gonzalo', 'suku-luz', 'suku-rodrigo', 'suku-hiring'], qty: true },
-      { type: 'text', text: ART66 },
-    ],
-  },
-  {
-    id: 'imouy', client: 'IMOUY', header: true, okMark: true, priceLabel: 'Rate', qtyLabel: 'Days',
-    unit: 'days', projectLookup: ['EG+', 'IMOUY'],
-    items: [
-      { type: 'line', id: 'imouy-facundo', label: 'Facundo', rate: 240, person: 'Facundo Wade' },
-      { type: 'blank' },
-      { type: 'sum', id: 'imouy-total', label: `${ART52} - Software dev`, over: ['imouy-facundo'] },
-    ],
-  },
-  {
-    id: 'ideal', client: 'Ideal Protein', header: true, okMark: true, priceLabel: 'Rate', qtyLabel: 'Hours',
-    unit: 'hours', projectLookup: ['Ideal Protein'],
-    items: [
-      { type: 'line', id: 'ideal-dev', label: `${ART52} - Software dev`, rate: 55, person: null, comment: 'Costos' },
-      { type: 'line', id: 'ideal-testing', label: `${ART52} - Software testing`, rate: 30, person: 'Luz Gutierrez' },
-      { type: 'line', id: 'ideal-claude', label: 'Claude Code Licences', rate: 50, qtyDefault: 2 },
-      { type: 'sum', id: 'ideal-total', label: '', over: ['ideal-dev', 'ideal-testing', 'ideal-claude'] },
-    ],
-  },
-  {
-    id: 'cash', client: 'Cash', header: true, okMark: false, priceLabel: 'Rate', qtyLabel: 'Hours',
-    unit: 'hours', projectLookup: null,
-    items: [{ type: 'line', id: 'cash-irae', label: 'ingresos gravados IRAE', rate: null, qtyDefault: 1 }],
-  },
-  {
-    id: 'smartway', client: 'Smartway', header: true, okMark: false, priceLabel: 'Rate', qtyLabel: 'Hours',
-    unit: 'hours', projectLookup: null,
-    items: [{ type: 'line', id: 'smartway-irae', label: 'ingresos gravados IRAE', rate: null, qtyDefault: 1 }],
-  },
-  {
-    id: 'mob', client: 'MOB', header: true, okMark: true, priceLabel: 'Rate', qtyLabel: 'Hours',
-    unit: 'hours', projectLookup: ['MOB Mantenimiento'],
-    items: [
-      { type: 'line', id: 'mob-dev', label: `${ART52} - Software dev`, rate: 45, person: null },
-      { type: 'sum', id: 'mob-total', label: '', over: ['mob-dev'] },
-    ],
-  },
-  {
-    id: 'claldy', client: 'Claldy', header: true, okMark: true, priceLabel: 'Rate', qtyLabel: 'Hours',
-    unit: 'hours', projectLookup: ['Claldy'],
-    items: [
-      { type: 'line', id: 'claldy-dev', label: `${ART52} - `, rate: 1, person: null },
-      { type: 'sum', id: 'claldy-total', label: '', over: ['claldy-dev'] },
-    ],
-  },
-]
+// The template used to be a hardcoded array here (10 client blocks). It now
+// lives in the DB (InvoiceBlock/InvoiceLineDef, see lib/invoice-template.ts)
+// so an admin can add/hide clients and edit their lines without a deploy —
+// computeInvoice()/getBlockTotals() below take it as a parameter instead.
+// scripts/add-invoice-blocks.ts has a literal copy of the original constant,
+// used once to seed the DB with the exact same 10 blocks.
 
 export interface LineState {
   resourceName: string | null
@@ -191,7 +96,7 @@ function sumFormula(col: 'D' | 'E', rowNumbers: number[]): string {
   return `SUM(${rows.map((r) => `${col}${r}`).join(',')})`
 }
 
-export function computeInvoice(states: Record<string, LineState>): ComputedRow[] {
+export function computeInvoice(template: InvoiceBlockDef[], states: Record<string, LineState>): ComputedRow[] {
   const rows: ComputedRow[] = []
   let sheetRow = 0
   const push = (row: Omit<ComputedRow, 'sheetRow'>): ComputedRow => {
@@ -206,7 +111,7 @@ export function computeInvoice(states: Record<string, LineState>): ComputedRow[]
   push({ blockId: null, kind: 'blank' })
   push({ blockId: null, kind: 'blank' })
 
-  for (const block of INVOICE_TEMPLATE) {
+  for (const block of template) {
     const byId = new Map<string, { row: number; total: number; qty: number }>()
 
     if (block.header) {
@@ -276,8 +181,8 @@ export function computeInvoice(states: Record<string, LineState>): ComputedRow[]
 // non-blank row of a block is always its grand total (the VAT-inclusive sum
 // for infogain, the post-discount total for infinite, the single line for
 // cash/smartway, etc.) — no separate "block total" concept needed elsewhere.
-export function getBlockTotals(rows: ComputedRow[]): { blockId: string; client: string; total: number }[] {
-  const clientById = new Map(INVOICE_TEMPLATE.map((b) => [b.id, b.client]))
+export function getBlockTotals(template: InvoiceBlockDef[], rows: ComputedRow[]): { blockId: string; client: string; total: number }[] {
+  const clientById = new Map(template.map((b) => [b.id, b.client]))
   const lastByBlock = new Map<string, number>()
   for (const row of rows) {
     if (!row.blockId || row.kind === 'blank' || row.total == null) continue
