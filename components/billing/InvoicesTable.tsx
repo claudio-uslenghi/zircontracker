@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react'
 import { toast } from '@/lib/toast'
-import { INVOICE_TEMPLATE } from '@/lib/invoice-sheet'
 
 interface InvoiceRow {
   id: number
@@ -24,8 +23,6 @@ interface InvoiceRow {
   status: 'Pendiente' | 'Vencida' | 'Pagada'
 }
 
-const clientByBlockId = new Map(INVOICE_TEMPLATE.map((b) => [b.id, b.client]))
-
 const money = (n: number) => n.toLocaleString('es-UY', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 
 const STATUS_STYLE: Record<InvoiceRow['status'], string> = {
@@ -38,7 +35,7 @@ type SortCol = 'month' | 'customer' | 'total' | 'billed' | 'outstanding' | 'outs
 
 export default function InvoicesTable() {
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery<{ rows: InvoiceRow[] }>({
+  const { data, isLoading } = useQuery<{ rows: InvoiceRow[]; blocks: { blockId: string; client: string }[] }>({
     queryKey: ['client-invoices'],
     queryFn: async () => {
       const res = await fetch('/api/invoices')
@@ -47,6 +44,7 @@ export default function InvoicesTable() {
     },
   })
   const rows = useMemo(() => data?.rows ?? [], [data])
+  const clientByBlockId = useMemo(() => new Map((data?.blocks ?? []).map((b) => [b.blockId, b.client])), [data])
 
   const [monthFilter, setMonthFilter] = useState('')
   const [clientFilter, setClientFilter] = useState('')
@@ -58,7 +56,7 @@ export default function InvoicesTable() {
   const months = useMemo(() => Array.from(new Set(rows.map((r) => r.month))).sort().reverse(), [rows])
   const clients = useMemo(
     () => Array.from(new Set(rows.map((r) => r.blockId))).map((id) => ({ id, label: clientByBlockId.get(id) ?? id })).sort((a, b) => a.label.localeCompare(b.label)),
-    [rows]
+    [rows, clientByBlockId]
   )
 
   const filtered = useMemo(

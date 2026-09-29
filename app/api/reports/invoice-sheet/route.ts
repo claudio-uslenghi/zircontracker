@@ -3,13 +3,13 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { resolveInvoicingOrder } from '@/lib/invoicing-report'
-import { INVOICE_TEMPLATE } from '@/lib/invoice-sheet'
+import { getInvoiceTemplate } from '@/lib/invoice-template'
 
-// Data the "Facturas" preview needs (read-only): which Resource/Project each
-// template line resolves to today, and the month's hours per (person, project)
-// for the client projects — so the UI can recompute a line when the admin
-// picks a different person, without extra requests. Same groupBy as the pivot.
+// Data the "Facturas" preview needs (read-only): the resolved template itself
+// (blocks/items now live in the DB — see lib/invoice-template.ts) plus the
+// month's hours per (person, project) for the client projects, so the client
+// can build initial line states and recompute a line when the admin picks a
+// different person, without extra requests. Same groupBy as the pivot.
 export async function GET(req: NextRequest) {
   try {
     await requireAdmin()
@@ -25,7 +25,8 @@ export async function GET(req: NextRequest) {
   const from = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0))
   const to = new Date(Date.UTC(y, m, 0, 23, 59, 59))
 
-  const [allResources, allProjects] = await Promise.all([
+  const [blocks, allResources, allProjects] = await Promise.all([
+    getInvoiceTemplate({ activeOnly: true }),
     prisma.resource.findMany({ select: { id: true, name: true } }),
     prisma.project.findMany({ select: { id: true, name: true } }),
   ])
@@ -35,28 +36,13 @@ export async function GET(req: NextRequest) {
   const blockProjects: Record<string, string | null> = {}
   const lineDefaults: Record<string, string | null> = {}
 
-  for (const block of INVOICE_TEMPLATE) {
-    if (block.projectLookup) {
-      const [resolved] = resolveInvoicingOrder(
-        [{ label: block.client, lookupNames: block.projectLookup }],
-        allProjects.map((p) => p.name)
-      )
-      blockProjects[block.id] = resolved.resolvedName
-      if (!resolved.resolvedName) warnings.push(`Cliente "${block.client}": no existe el proyecto en la base, cargá las horas a mano.`)
-    } else {
-      blockProjects[block.id] = null
-    }
+  for (const block of blocks) {
+    const projectName = block.projectLookup?.[0] ?? null
+    blockProjects[block.id] = projectName
+    if (block.projectLookup && !projectName) warnings.push(`Cliente "${block.client}": no tiene un proyecto vinculado en la base, cargá las horas a mano.`)
     for (const item of block.items) {
       if (item.type !== 'line' || item.person === undefined) continue
-      if (item.person === null) {
-        lineDefaults[item.id] = null
-        continue
-      }
-      const [resolved] = resolveInvoicingOrder([{ label: item.label, lookupNames: [item.person] }], resourceNames)
-      lineDefaults[item.id] = resolved.resolvedName ? resolved.resolvedName.trim() : null
-      if (block.projectLookup && !resolved.resolvedName) {
-        warnings.push(`Cliente "${block.client}": la persona "${item.person}" no existe en la base — elegí otra en la línea.`)
-      }
+      lineDefaults[item.id] = item.person
     }
   }
 
@@ -88,6 +74,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     month,
+    blocks,
     blockProjects,
     lineDefaults,
     hours,
