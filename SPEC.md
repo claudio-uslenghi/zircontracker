@@ -2591,9 +2591,22 @@ use para facturar de verdad.
 
 Verificado en el browser contra la Turso real: pago parcial ($500 sobre $1.120 facturado) → Outstanding $620, estado "Parcial"; segundo pago que suma $1.200 total (sobrepago) → Outstanding **-$80** (negativo, como se pidió), estado "Pagada"; borrado de pagos recalcula todo correctamente. Datos de prueba limpiados al terminar.
 
-## Pendiente (bloqueado en las credenciales de Google)
+## Pendiente
 
-- **Sync a Google Sheets** (crear/actualizar los tabs "Invoicing `<Mes>`" / "Horas por proyecto `<Mes>`") y **rol contador** — no implementados todavía. El primero necesita la service account (ver instrucciones que te pasé en el chat); el segundo no tiene bloqueo técnico, se puede encarar en cualquier momento.
+- **Rol contador** — no implementado todavía, sin bloqueo técnico, se puede encarar en cualquier momento (separar `requireAdmin()` de un nuevo `requireBillingAccess()` en los endpoints de lectura/edición de Facturas).
+
+## Implementado — Sync a Google Sheets
+
+Una vez recibida la service account (`zircontracker-sheets-sync@invocing-test.iam.gserviceaccount.com`, guardada en `.env.local`, nunca committeada), se implementó el sync automático:
+
+- `lib/google-sheets.ts` (nuevo): usa `googleapis` con credenciales JWT de la service account. `syncInvoicingMonth(month, pivotRows, invoiceCells)` crea (si no existen) o sobreescribe los dos tabs del mes — `Invoicing <Mes en inglés> <Año>` (espejo de la hoja "Facturas", con las mismas fórmulas en vivo que el `.xlsx`, vía `valueInputOption: USER_ENTERED`) y `Horas por proyecto <Mes en español> <Año>` (espejo del pivot "Info para invoicing") — replicando exactamente la convención de nombres real confirmada antes.
+- Se dispara desde `app/api/reports/invoicing/export/route.ts`, en el mismo punto donde ya se crean/actualizan los `ClientInvoice` (solo cuando se manda `invoiceLines`, o sea al click real de "Generar", no en cualquier descarga). Nunca bloquea la respuesta: si no hay credenciales configuradas (`GOOGLE_SHEETS_CLIENT_EMAIL`/`_PRIVATE_KEY`/`_SPREADSHEET_ID`) devuelve `skipped`; si la API de Sheets falla (planilla no compartida, red, etc.) devuelve `error` con el mensaje, sin afectar el `.xlsx` ni los `ClientInvoice` ya generados. El resultado viaja en el header `X-Sheets-Sync-Status` (`ok` | `skipped` | `error:<mensaje urlencodeado>`).
+- `app/admin/billing/page.tsx`: lee ese header tras exportar y muestra un toast — éxito si `ok`, warning si `skipped` (sin credenciales), error con el mensaje real si `error:...`.
+- Variables de entorno nuevas en `.env.local` (local) — **faltan agregarse también en Vercel** para que funcione en producción: `GOOGLE_SHEETS_CLIENT_EMAIL`, `GOOGLE_SHEETS_PRIVATE_KEY`, `GOOGLE_SHEETS_PROJECT_ID`, `GOOGLE_SHEETS_SPREADSHEET_ID` (apunta a la planilla de test `1T3yvdh-FI41eux5QaPWU1vyFnTS2xW6NSjZaV-d6WnM` que confirmó el usuario — cuando haya que apuntar a la planilla real de Andrés Zunino, alcanza con cambiar esta única variable).
+
+**Verificado en vivo contra la API real de Google Sheets** (no solo con mocks): un script descartable ejecutó el mismo camino de cálculo que usa la ruta real (template real desde Prisma, `computeInvoice`/`computedRowsToCells` reales) para un mes futuro inexistente (2030-01, para no tocar datos reales), sincronizó contra la planilla de test real, confirmó que los dos tabs se crearon con el contenido esperado (incluye correctamente a Diego Mortenssen en Infogain, confirmando que la reconciliación de bloques sigue vigente), y los borró al terminar. Aparte, se probó por separado que la service account tiene permiso de **Editor** real (no solo lectura): se creó un tab de prueba, se escribió una fórmula (`=2+2` → se leyó `4`), y se borró.
+
+**No verificado en esta tanda** (bloqueado por no tener credenciales de login de admin en este entorno): el flujo completo vía la UI real de `/admin/billing` — botón "Generar" → toast. La lógica de lectura del header y el render del toast se revisaron a ojo (mismo patrón que el toast de `X-Invoice-Records-Summary` ya probado en producción). Recomendado: la próxima vez que generes un mes real desde la UI, confirmar que aparece el toast "Google Sheets sincronizado" y que los tabs del mes aparecen en la planilla real.
 
 ## Nota aparte, no resuelta en esta tanda
 

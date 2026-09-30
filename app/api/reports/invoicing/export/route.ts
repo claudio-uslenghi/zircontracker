@@ -7,6 +7,7 @@ import { INVOICING_PROJECT_ORDER, INVOICING_RESOURCE_ORDER, resolveInvoicingOrde
 import { computeInvoice, computedRowsToCells, getBlockTotals, type LineState } from '@/lib/invoice-sheet'
 import { getInvoiceTemplate } from '@/lib/invoice-template'
 import { lastDayOfMonth } from '@/lib/invoice-records'
+import { syncInvoicingMonth } from '@/lib/google-sheets'
 
 // Generates the final .xlsx for the monthly "Info para invoicing" report,
 // scoped to exactly the resource/project labels the admin confirmed in the
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
   // accountant works off the invoice sheet, the pivot is backup detail.
   const invoiceLines: Record<string, LineState> | undefined = body.invoiceLines
   let recordsSummary = ''
+  let sheetsSyncStatus = ''
   if (invoiceLines) {
     const template = await getInvoiceTemplate({ activeOnly: true })
     const computedRows = computeInvoice(template, invoiceLines)
@@ -132,6 +134,14 @@ export async function POST(req: NextRequest) {
     const created = blockTotals.filter((b) => !existingIds.has(b.blockId)).length
     const updated = blockTotals.length - created
     recordsSummary = `created=${created};updated=${updated}`
+
+    // Espejo best-effort en la planilla real de Google Sheets (dos tabs,
+    // creados o actualizados). Nunca bloquea la descarga del .xlsx ni la
+    // creación de los ClientInvoice de arriba.
+    const sync = await syncInvoicingMonth(month, rows, cells)
+    sheetsSyncStatus = sync.status === 'error'
+      ? `error:${encodeURIComponent((sync.message ?? 'Error desconocido').slice(0, 300))}`
+      : sync.status
   }
 
   XLSX.utils.book_append_sheet(wb, infoSheet, 'Info para invoicing')
@@ -143,6 +153,7 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="invoicing-${month}.xlsx"`,
       ...(recordsSummary ? { 'X-Invoice-Records-Summary': recordsSummary } : {}),
+      ...(sheetsSyncStatus ? { 'X-Sheets-Sync-Status': sheetsSyncStatus } : {}),
     },
   })
 }
