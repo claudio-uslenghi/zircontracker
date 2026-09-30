@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import { toast } from '@/lib/toast'
 
@@ -61,13 +61,19 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data
 }
 
-function NewBlockForm({ projects, onCreated }: { projects: Project[]; onCreated: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [client, setClient] = useState('')
-  const [customerName, setCustomerName] = useState('')
-  const [projectId, setProjectId] = useState<number | null>(null)
-  const [unit, setUnit] = useState<'hours' | 'days'>('hours')
-  const [paymentTermDays, setPaymentTermDays] = useState(30)
+function BlockForm({
+  projects, editingBlock, onDone, onCancel,
+}: {
+  projects: Project[]
+  editingBlock?: Block
+  onDone: () => void
+  onCancel?: () => void
+}) {
+  const [client, setClient] = useState(editingBlock?.client ?? '')
+  const [customerName, setCustomerName] = useState(editingBlock?.customerName ?? '')
+  const [projectId, setProjectId] = useState<number | null>(editingBlock?.projectId ?? null)
+  const [unit, setUnit] = useState<'hours' | 'days'>(editingBlock?.unit ?? 'hours')
+  const [paymentTermDays, setPaymentTermDays] = useState(editingBlock?.paymentTermDays ?? 30)
   const [saving, setSaving] = useState(false)
 
   const projectOptions = useMemo(
@@ -79,33 +85,33 @@ function NewBlockForm({ projects, onCreated }: { projects: Project[]; onCreated:
     if (!client.trim()) return
     setSaving(true)
     try {
-      await api('/api/admin/invoice-blocks', {
-        method: 'POST',
-        body: JSON.stringify({
-          client: client.trim(), customerName: customerName.trim() || client.trim(),
-          projectId, unit, paymentTermDays,
-          priceLabel: unit === 'days' ? 'Rate' : 'Precio', qtyLabel: unit === 'days' ? 'Days' : 'Horas',
-        }),
-      })
-      toast({ title: 'Cliente creado', description: `"${client.trim()}" — agregale líneas para empezar a facturarlo.`, variant: 'success' })
-      setClient(''); setCustomerName(''); setProjectId(null); setUnit('hours'); setPaymentTermDays(30); setOpen(false)
-      onCreated()
+      if (editingBlock) {
+        await api(`/api/admin/invoice-blocks/${editingBlock.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            client: client.trim(), customerName: customerName.trim() || client.trim(),
+            projectId, unit, paymentTermDays,
+            priceLabel: unit === 'days' ? 'Rate' : 'Precio', qtyLabel: unit === 'days' ? 'Days' : 'Horas',
+          }),
+        })
+        toast({ title: 'Cliente actualizado', variant: 'success' })
+      } else {
+        await api('/api/admin/invoice-blocks', {
+          method: 'POST',
+          body: JSON.stringify({
+            client: client.trim(), customerName: customerName.trim() || client.trim(),
+            projectId, unit, paymentTermDays,
+            priceLabel: unit === 'days' ? 'Rate' : 'Precio', qtyLabel: unit === 'days' ? 'Days' : 'Horas',
+          }),
+        })
+        toast({ title: 'Cliente creado', description: `"${client.trim()}" — agregale líneas para empezar a facturarlo.`, variant: 'success' })
+      }
+      onDone()
     } catch (e) {
-      toast({ title: 'No se pudo crear', description: e instanceof Error ? e.message : 'Error', variant: 'error' })
+      toast({ title: 'No se pudo guardar', description: e instanceof Error ? e.message : 'Error', variant: 'error' })
     } finally {
       setSaving(false)
     }
-  }
-
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 px-3 py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
-      >
-        <Plus size={15} /> Nuevo proyecto/cliente
-      </button>
-    )
   }
 
   return (
@@ -145,83 +151,103 @@ function NewBlockForm({ projects, onCreated }: { projects: Project[]; onCreated:
       </div>
       <div className="flex gap-2">
         <button onClick={submit} disabled={saving || !client.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-40">
-          {saving ? 'Creando...' : 'Crear cliente'}
+          {saving ? 'Guardando...' : editingBlock ? 'Guardar cambios' : 'Crear cliente'}
         </button>
-        <button onClick={() => setOpen(false)} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">Cancelar</button>
+        {onCancel && <button onClick={onCancel} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">Cancelar</button>}
       </div>
     </div>
   )
 }
 
-function NewLineForm({ block, onCreated }: { block: Block; onCreated: () => void }) {
+function NewBlockButton({ projects, onCreated }: { projects: Project[]; onCreated: () => void }) {
   const [open, setOpen] = useState(false)
-  const [type, setType] = useState<'line' | 'sum' | 'vat' | 'discount'>('line')
-  const [label, setLabel] = useState('')
-  const [rate, setRate] = useState<number | ''>('')
-  const [hasPerson, setHasPerson] = useState(false)
-  const [resourceId, setResourceId] = useState<number | null>(null)
-  const [qtyDefault, setQtyDefault] = useState(0)
-  const [comment, setComment] = useState('')
-  const [refs, setRefs] = useState<string[]>([])
-  const [factor, setFactor] = useState<number | ''>('')
-  const [qtyIsSum, setQtyIsSum] = useState(false)
-  const [avgRate, setAvgRate] = useState(false)
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1.5 px-3 py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
+      >
+        <Plus size={15} /> Nuevo proyecto/cliente
+      </button>
+    )
+  }
+  return <BlockForm projects={projects} onDone={() => { setOpen(false); onCreated() }} onCancel={() => setOpen(false)} />
+}
+
+function LineForm({
+  block, editingItem, onDone, onCancel,
+}: {
+  block: Block
+  editingItem?: LineItem
+  onDone: () => void
+  onCancel: () => void
+}) {
+  const isEdit = !!editingItem
+  const [type, setType] = useState<'line' | 'sum' | 'vat' | 'discount'>((editingItem?.type as 'line' | 'sum' | 'vat' | 'discount') ?? 'line')
+  const [label, setLabel] = useState(editingItem?.label ?? '')
+  const [rate, setRate] = useState<number | ''>(editingItem?.rate ?? '')
+  const [hasPerson, setHasPerson] = useState(editingItem?.hasPerson ?? false)
+  const [resourceId, setResourceId] = useState<number | null>(editingItem?.resourceId ?? null)
+  const [qtyDefault, setQtyDefault] = useState(editingItem?.qtyDefault ?? 0)
+  const [comment, setComment] = useState(editingItem?.comment ?? '')
+  const [refs, setRefs] = useState<string[]>(editingItem?.refs ? editingItem.refs.split(',') : [])
+  const [factor, setFactor] = useState<number | ''>(editingItem?.factor ?? '')
+  const [qtyIsSum, setQtyIsSum] = useState(editingItem?.qtyIsSum ?? false)
+  const [avgRate, setAvgRate] = useState(editingItem?.avgRate ?? false)
+  // Checked by default (per spec) so a new line doesn't silently sit outside
+  // every existing Subtotal the way Andre Conrado's "Dev" line did.
+  const [includeInSums, setIncludeInSums] = useState<number[]>(() =>
+    block.items.filter((i) => i.type === 'sum' && i.id !== editingItem?.id).map((i) => i.id)
+  )
   const [saving, setSaving] = useState(false)
 
   const { data: resources } = useQuery<Resource[]>({
     queryKey: ['resources-for-invoice-lines'],
     queryFn: () => api<Resource[]>('/api/resources'),
-    enabled: open,
   })
   const resourceOptions = useMemo(
     () => [{ value: '', label: '— Sin persona por defecto —' }, ...(resources ?? []).map((r) => ({ value: String(r.id), label: r.name }))],
     [resources]
   )
-  const referenceable = block.items.filter((i) => i.type === 'line' || i.type === 'sum')
-
-  const reset = () => {
-    setType('line'); setLabel(''); setRate(''); setHasPerson(false); setResourceId(null)
-    setQtyDefault(0); setComment(''); setRefs([]); setFactor(''); setQtyIsSum(false); setAvgRate(false)
-  }
+  // Only earlier rows can be a sum/vat/discount's base — the calc engine
+  // processes top to bottom and a forward reference is silently dropped.
+  const referenceable = block.items.filter(
+    (i) => (i.type === 'line' || i.type === 'sum') && (!editingItem || i.order < editingItem.order)
+  )
+  const existingSums = block.items.filter((i) => i.type === 'sum' && i.id !== editingItem?.id)
 
   const toggleRef = (slug: string) => {
     if (type === 'vat' || type === 'discount') { setRefs([slug]); return }
     setRefs((prev) => (prev.includes(slug) ? prev.filter((r) => r !== slug) : [...prev, slug]))
   }
+  const toggleIncludeInSum = (id: number) => setIncludeInSums((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
   const submit = async () => {
     if (!label.trim()) return
     setSaving(true)
     try {
-      await api(`/api/admin/invoice-blocks/${block.id}/items`, {
-        method: 'POST',
-        body: JSON.stringify({
-          type, label: label.trim(),
-          rate: type === 'line' && rate !== '' ? rate : null,
-          hasPerson: type === 'line' ? hasPerson : false,
-          resourceId: type === 'line' && hasPerson ? resourceId : null,
-          qtyDefault: type === 'line' ? qtyDefault : 0,
-          comment: comment.trim(),
-          refs,
-          factor: (type === 'vat' || type === 'discount') && factor !== '' ? factor : null,
-          qtyIsSum, avgRate,
-        }),
-      })
-      reset(); setOpen(false)
-      onCreated()
+      const payload = {
+        type, label: label.trim(),
+        rate: type === 'line' && rate !== '' ? rate : null,
+        hasPerson: type === 'line' ? hasPerson : false,
+        resourceId: type === 'line' && hasPerson ? resourceId : null,
+        qtyDefault: type === 'line' ? qtyDefault : 0,
+        comment: comment.trim(),
+        refs,
+        factor: (type === 'vat' || type === 'discount') && factor !== '' ? factor : null,
+        qtyIsSum, avgRate,
+      }
+      if (isEdit) {
+        await api(`/api/admin/invoice-blocks/${block.id}/items/${editingItem.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+      } else {
+        await api(`/api/admin/invoice-blocks/${block.id}/items`, { method: 'POST', body: JSON.stringify({ ...payload, includeInSums }) })
+      }
+      onDone()
     } catch (e) {
-      toast({ title: 'No se pudo agregar la línea', description: e instanceof Error ? e.message : 'Error', variant: 'error' })
+      toast({ title: 'No se pudo guardar la línea', description: e instanceof Error ? e.message : 'Error', variant: 'error' })
     } finally {
       setSaving(false)
     }
-  }
-
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 mt-2">
-        <Plus size={13} /> Agregar línea
-      </button>
-    )
   }
 
   return (
@@ -229,7 +255,12 @@ function NewLineForm({ block, onCreated }: { block: Block; onCreated: () => void
       <div className="flex flex-wrap gap-2 items-end">
         <div>
           <label className="block text-[11px] font-medium text-gray-500 mb-0.5">Tipo</label>
-          <select value={type} onChange={(e) => { setType(e.target.value as typeof type); setRefs([]) }} className="border border-gray-300 rounded px-2 py-1 text-xs bg-white">
+          <select
+            value={type}
+            disabled={isEdit}
+            onChange={(e) => { setType(e.target.value as typeof type); setRefs([]) }}
+            className={`border border-gray-300 rounded px-2 py-1 text-xs ${isEdit ? 'bg-gray-100 text-gray-500' : 'bg-white'}`}
+          >
             <option value="line">Línea simple</option>
             <option value="sum">Subtotal (suma de líneas)</option>
             <option value="vat">IVA (% de un subtotal)</option>
@@ -278,6 +309,20 @@ function NewLineForm({ block, onCreated }: { block: Block; onCreated: () => void
         </div>
       )}
 
+      {!isEdit && type === 'line' && existingSums.length > 0 && (
+        <div>
+          <label className="block text-[11px] font-medium text-gray-500 mb-1">Incluir en el total</label>
+          <div className="flex flex-wrap gap-2">
+            {existingSums.map((s) => (
+              <label key={s.id} className="flex items-center gap-1.5 text-xs text-gray-600">
+                <input type="checkbox" checked={includeInSums.includes(s.id)} onChange={() => toggleIncludeInSum(s.id)} />
+                {s.label || 'Subtotal'}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       {type === 'sum' && (
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -295,7 +340,7 @@ function NewLineForm({ block, onCreated }: { block: Block; onCreated: () => void
             {type === 'sum' ? 'Líneas a sumar' : type === 'vat' ? 'Subtotal base' : 'Total que reduce'}
           </label>
           {referenceable.length === 0 ? (
-            <p className="text-xs text-gray-400">Todavía no hay líneas anteriores para referenciar.</p>
+            <p className="text-xs text-gray-400">No hay líneas anteriores para referenciar.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {referenceable.map((it) => (
@@ -321,16 +366,80 @@ function NewLineForm({ block, onCreated }: { block: Block; onCreated: () => void
 
       <div className="flex gap-2">
         <button onClick={submit} disabled={saving} className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-40">
-          {saving ? 'Guardando...' : 'Agregar'}
+          {saving ? 'Guardando...' : isEdit ? 'Guardar cambios' : 'Agregar'}
         </button>
-        <button onClick={() => { reset(); setOpen(false) }} className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700">Cancelar</button>
+        <button onClick={onCancel} className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700">Cancelar</button>
       </div>
     </div>
   )
 }
 
-function BlockRow({ block, onChanged }: { block: Block; onChanged: () => void }) {
+function ItemRow({
+  block, item, isFirst, isLast, onChanged,
+}: {
+  block: Block
+  item: LineItem
+  isFirst: boolean
+  isLast: boolean
+  onChanged: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [moving, setMoving] = useState(false)
+
+  const move = async (direction: 'up' | 'down') => {
+    setMoving(true)
+    try {
+      await api(`/api/admin/invoice-blocks/${block.id}/items/${item.id}/move`, { method: 'PATCH', body: JSON.stringify({ direction }) })
+      onChanged()
+    } catch (e) {
+      toast({ title: 'No se pudo mover', description: e instanceof Error ? e.message : 'Error', variant: 'error' })
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  const removeItem = async () => {
+    try {
+      await api(`/api/admin/invoice-blocks/${block.id}/items/${item.id}`, { method: 'DELETE' })
+      onChanged()
+    } catch (e) {
+      toast({ title: 'No se pudo borrar la línea', description: e instanceof Error ? e.message : 'Error', variant: 'error' })
+    }
+  }
+
+  if (editing) {
+    return <LineForm block={block} editingItem={item} onDone={() => { setEditing(false); onChanged() }} onCancel={() => setEditing(false)} />
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
+      <div className="flex flex-col -my-1">
+        <button onClick={() => move('up')} disabled={isFirst || moving} className="text-gray-300 hover:text-gray-600 disabled:opacity-20 disabled:hover:text-gray-300">
+          <ArrowUp size={11} />
+        </button>
+        <button onClick={() => move('down')} disabled={isLast || moving} className="text-gray-300 hover:text-gray-600 disabled:opacity-20 disabled:hover:text-gray-300">
+          <ArrowDown size={11} />
+        </button>
+      </div>
+      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${TYPE_BADGE[item.type]}`}>{TYPE_LABEL[item.type]}</span>
+      <span className="flex-1 truncate text-gray-700">{item.label || <em className="text-gray-400">(sin label)</em>}</span>
+      {item.type === 'line' && <span className="text-gray-500 tabular-nums">{item.rate ?? '—'}</span>}
+      {item.hasPerson && <span className="text-gray-400">{item.resource?.name ?? '— sin persona —'}</span>}
+      {(item.type === 'vat' || item.type === 'discount') && <span className="text-gray-500 tabular-nums">{item.factor}</span>}
+      <button onClick={() => setEditing(true)} className="text-gray-300 hover:text-blue-500">
+        <Pencil size={12} />
+      </button>
+      <button onClick={removeItem} className="text-gray-300 hover:text-red-500">
+        <Trash2 size={12} />
+      </button>
+    </div>
+  )
+}
+
+function BlockRow({ block, projects, onChanged }: { block: Block; projects: Project[]; onChanged: () => void }) {
   const [expanded, setExpanded] = useState(false)
+  const [editingBlock, setEditingBlock] = useState(false)
+  const [addingLine, setAddingLine] = useState(false)
 
   const toggleActive = async () => {
     try {
@@ -351,14 +460,7 @@ function BlockRow({ block, onChanged }: { block: Block; onChanged: () => void })
     }
   }
 
-  const removeItem = async (itemId: number) => {
-    try {
-      await api(`/api/admin/invoice-blocks/${block.id}/items/${itemId}`, { method: 'DELETE' })
-      onChanged()
-    } catch (e) {
-      toast({ title: 'No se pudo borrar la línea', description: e instanceof Error ? e.message : 'Error', variant: 'error' })
-    }
-  }
+  const items = block.items.filter((i) => i.type !== 'text' && i.type !== 'blank')
 
   return (
     <div className={`border rounded-lg bg-white ${block.active ? 'border-gray-200' : 'border-gray-200 opacity-60'}`}>
@@ -375,6 +477,9 @@ function BlockRow({ block, onChanged }: { block: Block; onChanged: () => void })
           </div>
           <p className="text-xs text-gray-500">{block.customerName}</p>
         </div>
+        <button onClick={() => setEditingBlock((v) => !v)} className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 text-gray-600">
+          Editar
+        </button>
         <button onClick={toggleActive} className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-50 text-gray-600">
           {block.active ? 'Ocultar' : 'Reactivar'}
         </button>
@@ -386,25 +491,27 @@ function BlockRow({ block, onChanged }: { block: Block; onChanged: () => void })
           <Trash2 size={13} />
         </button>
       </div>
+      {editingBlock && (
+        <div className="border-t border-gray-100 p-3">
+          <BlockForm projects={projects} editingBlock={block} onDone={() => { setEditingBlock(false); onChanged() }} onCancel={() => setEditingBlock(false)} />
+        </div>
+      )}
       {expanded && (
         <div className="border-t border-gray-100 p-3 space-y-1">
-          {block.items.length === 0 ? (
+          {items.length === 0 ? (
             <p className="text-xs text-gray-400">Sin líneas todavía.</p>
           ) : (
-            block.items.map((item) => (
-              <div key={item.id} className="flex items-center gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${TYPE_BADGE[item.type]}`}>{TYPE_LABEL[item.type]}</span>
-                <span className="flex-1 truncate text-gray-700">{item.label || <em className="text-gray-400">(sin label)</em>}</span>
-                {item.type === 'line' && <span className="text-gray-500 tabular-nums">{item.rate ?? '—'}</span>}
-                {item.hasPerson && <span className="text-gray-400">{item.resource?.name ?? '— sin persona —'}</span>}
-                {(item.type === 'vat' || item.type === 'discount') && <span className="text-gray-500 tabular-nums">{item.factor}</span>}
-                <button onClick={() => removeItem(item.id)} className="text-gray-300 hover:text-red-500">
-                  <Trash2 size={12} />
-                </button>
-              </div>
+            items.map((item, i) => (
+              <ItemRow key={item.id} block={block} item={item} isFirst={i === 0} isLast={i === items.length - 1} onChanged={onChanged} />
             ))
           )}
-          <NewLineForm block={block} onCreated={onChanged} />
+          {addingLine ? (
+            <LineForm block={block} onDone={() => { setAddingLine(false); onChanged() }} onCancel={() => setAddingLine(false)} />
+          ) : (
+            <button onClick={() => setAddingLine(true)} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 mt-2">
+              <Plus size={13} /> Agregar línea
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -435,14 +542,14 @@ export default function InvoiceBlocksConfig() {
         Clientes/proyectos que se facturan cada mes en &quot;Facturas por cliente&quot;. Ocultar un cliente lo saca de la
         generación futura sin borrar sus facturas históricas.
       </p>
-      <NewBlockForm projects={projects ?? []} onCreated={refresh} />
+      <NewBlockButton projects={projects ?? []} onCreated={refresh} />
       <div className="space-y-2">
-        {active.map((b) => <BlockRow key={b.id} block={b} onChanged={refresh} />)}
+        {active.map((b) => <BlockRow key={b.id} block={b} projects={projects ?? []} onChanged={refresh} />)}
       </div>
       {hidden.length > 0 && (
         <div className="space-y-2 pt-2">
           <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Ocultos</p>
-          {hidden.map((b) => <BlockRow key={b.id} block={b} onChanged={refresh} />)}
+          {hidden.map((b) => <BlockRow key={b.id} block={b} projects={projects ?? []} onChanged={refresh} />)}
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
+import { computeInsertOrder, validateRefsOrder } from '@/lib/invoice-block-order'
 
 function slugifyRef(s: string): string {
   return (
@@ -38,26 +39,55 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     refSlug = `${base}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`
   }
 
-  const maxOrder = await prisma.invoiceLineDef.aggregate({ where: { blockId }, _max: { order: true } })
+  // New lines land right before the block's first total row (sum/vat/
+  // discount), grouped with the other data lines, instead of always at the
+  // very end — that's what caused a new line to render "below the total"
+  // and silently get excluded from it.
+  const order = await computeInsertOrder(blockId, type)
 
-  const item = await prisma.invoiceLineDef.create({
-    data: {
-      blockId,
-      refSlug,
-      order: (maxOrder._max.order ?? -1) + 1,
-      type,
-      label: String(body.label ?? ''),
-      rate: type === 'line' && body.rate != null ? Number(body.rate) : null,
-      rateFormula: type === 'line' ? body.rateFormula || null : null,
-      hasPerson: type === 'line' ? Boolean(body.hasPerson) : false,
-      resourceId: type === 'line' && body.hasPerson && body.resourceId != null ? Number(body.resourceId) : null,
-      qtyDefault: type === 'line' && body.qtyDefault != null ? Number(body.qtyDefault) : 0,
-      comment: String(body.comment ?? ''),
-      refs: refs.join(','),
-      factor: (type === 'vat' || type === 'discount') && body.factor != null ? Number(body.factor) : null,
-      qtyIsSum: type === 'sum' ? Boolean(body.qtyIsSum) : false,
-      avgRate: type === 'sum' ? Boolean(body.avgRate) : false,
-    },
+  if (refs.length > 0) {
+    const err = await validateRefsOrder(blockId, refs, order)
+    if (err) return NextResponse.json({ error: err }, { status: 400 })
+  }
+
+  // A new `line` can opt into one or more of the block's existing subtotals
+  // (checked by default in the UI) — without this, a line added after a
+  // Subtotal already exists just sits there uncounted, which is exactly what
+  // happened with Andre Conrado's "Dev" line on Ideal Protein.
+  const includeInSums: number[] = Array.isArray(body.includeInSums) ? body.includeInSums.map(Number) : []
+
+  const item = await prisma.$transaction(async (tx) => {
+    const created = await tx.invoiceLineDef.create({
+      data: {
+        blockId,
+        refSlug,
+        order,
+        type,
+        label: String(body.label ?? ''),
+        rate: type === 'line' && body.rate != null ? Number(body.rate) : null,
+        rateFormula: type === 'line' ? body.rateFormula || null : null,
+        hasPerson: type === 'line' ? Boolean(body.hasPerson) : false,
+        resourceId: type === 'line' && body.hasPerson && body.resourceId != null ? Number(body.resourceId) : null,
+        qtyDefault: type === 'line' && body.qtyDefault != null ? Number(body.qtyDefault) : 0,
+        comment: String(body.comment ?? ''),
+        refs: refs.join(','),
+        factor: (type === 'vat' || type === 'discount') && body.factor != null ? Number(body.factor) : null,
+        qtyIsSum: type === 'sum' ? Boolean(body.qtyIsSum) : false,
+        avgRate: type === 'sum' ? Boolean(body.avgRate) : false,
+      },
+    })
+
+    if (type === 'line' && includeInSums.length > 0) {
+      const sums = await tx.invoiceLineDef.findMany({ where: { id: { in: includeInSums }, blockId, type: 'sum' } })
+      for (const sum of sums) {
+        const parts = sum.refs ? sum.refs.split(',') : []
+        if (!parts.includes(created.refSlug)) {
+          await tx.invoiceLineDef.update({ where: { id: sum.id }, data: { refs: [...parts, created.refSlug].join(',') } })
+        }
+      }
+    }
+
+    return created
   })
   return NextResponse.json(item, { status: 201 })
 }

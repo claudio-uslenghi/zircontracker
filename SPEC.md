@@ -2343,3 +2343,85 @@ cambio, antes de tocar la UI voy a migrar el template a la base y verificar que 
 número, y recién ahí avanzo con los endpoints y la pantalla de configuración — si preferís que lo
 parta en dos PRs (1: migración del motor sin cambios visibles; 2: UI de alta/edición) avisame,
 si no lo hago todo junto como el resto de esta sesión.
+
+---
+
+## Fix: edición de líneas y de bloque en "Configurar clientes"
+
+### Objective
+
+Bug report real en producción: al agregar "Andre Conrado" (línea "Dev") a Ideal Protein desde
+"Configurar clientes", (1) la línea quedó debajo del Subtotal en vez de agrupada con las demás
+líneas, (2) el precio por hora que se cargó no quedó guardado, y (3) no había forma de corregir
+nada porque **no existía edición de líneas** en la UI — solo alta y borrado. Verificado
+directamente contra la base real: la línea `dev-munavov2` tenía `rate: null` y el Subtotal
+(`ideal-total`) seguía referenciando solo las 3 líneas originales — el dato quedó "atrapado" sin
+forma de arreglarse.
+
+### Hallazgos (revisión de código, no solo lo reportado)
+
+1. **Sin edición de líneas**: el endpoint `PATCH .../items/[itemId]` ya existía, pero
+   `InvoiceBlocksConfig.tsx` nunca lo usaba — solo alta (`NewLineForm`) y borrado.
+2. **Líneas nuevas siempre al final** (`order = max+1`): por eso "Dev" quedó después del Subtotal.
+3. **Consecuencia de (2)**: un Subtotal es una lista fija de refs elegida al crearlo — una línea
+   agregada después nunca se suma sola, hay que editarlo a mano (imposible sin (1)).
+4. **Hueco de integridad no reportado**: si un Subtotal/IVA/Descuento llegara a referenciar una
+   línea *posterior* en el orden, `computeInvoice` la ignora en silencio (esa parte del total da 0,
+   sin ningún error) — no había validación de esto en ningún lado.
+5. Los datos del bloque en sí (nombre legal, proyecto, unidad, término de pago) tampoco eran
+   editables después de crear el cliente.
+
+Dato roto corregido a mano en la base mientras se armaba el fix: `rate = 55` en la línea de Andre
+Conrado, y se agregó su refSlug al Subtotal de Ideal Protein.
+
+### Decisiones confirmadas con el usuario
+
+1. Al crear una línea simple en un bloque con Subtotal(es), se ofrece un checkbox **"Incluir en el
+   total"** por cada Subtotal existente, tildado por defecto — si hay más de uno, se elige cuál(es).
+2. Una línea nueva se inserta **antes del primer Subtotal/IVA/Descuento** del bloque (agrupada con
+   las demás líneas de datos), y además se agregan flechas subir/bajar para reordenar cualquier
+   línea a mano.
+3. También se agrega edición de los datos del bloque (nombre legal, proyecto, unidad, término de
+   pago), no solo de las líneas — mismo problema de fondo, se toca la misma pantalla.
+
+### Diseño
+
+- `lib/invoice-block-order.ts` (nuevo): ordenamiento disperso (`order` en pasos de 1000) para poder
+  insertar una línea "entre" dos existentes sin tener que correr el resto — evita el problema real
+  de que dos `UPDATE` secuenciales podrían chocar contra el índice único `(blockId, order)`.
+  `computeInsertOrder()` (línea simple → antes del primer total; total nuevo → al final, como
+  antes), `resequenceBlock()` (fallback si se acaba el espacio entero entre dos vecinos, dos fases
+  con offset temporal para no chocar con el índice único), `swapOrder()` (para reordenar, mismo
+  truco del offset temporal), `validateRefsOrder()` (rechaza una referencia hacia adelante con un
+  error claro, en vez de dejar que el cálculo la ignore en silencio).
+- `POST .../items`: usa `computeInsertOrder`, valida refs con `validateRefsOrder`, y acepta
+  `includeInSums: number[]` — agrega el refSlug de la línea nueva a esos Subtotales, todo en una
+  transacción.
+- `PATCH .../items/[itemId]`: ya no acepta `order` crudo (eso ahora es responsabilidad exclusiva
+  del endpoint de mover, para no arriesgar el índice único); valida refs igual que el alta.
+- `PATCH .../items/[itemId]/move` (nuevo): sube/baja una línea intercambiando su `order` con el
+  vecino inmediato (vía valor temporal). Antes de aplicar el swap, revisa que ningún Subtotal/IVA/
+  Descuento del bloque quede referenciando algo posterior a sí mismo como resultado del movimiento.
+- `components/billing/InvoiceBlocksConfig.tsx`: `NewLineForm`/`NewBlockForm` pasan a ser
+  `LineForm`/`BlockForm` con un modo edición (prefill + PATCH) además de alta (POST); cada línea
+  tiene lápiz (editar) y flechas subir/bajar; cada bloque tiene botón "Editar" además de
+  "Ocultar"/borrar.
+
+### Testing Strategy
+
+- `npx tsc --noEmit` y `npm run build`.
+- **QA independiente**: subagente `agent-skills:test-engineer` (regla nueva en el CLAUDE.md global)
+  con el spec + archivos tocados, sin mi razonamiento de implementación — arma sus propios casos
+  (incluidos bordes) y los corre contra el browser real, con datos descartables.
+- Casos mínimos a cubrir: editar precio/persona de una línea existente y ver que se refleje en la
+  próxima previsualización; agregar una línea nueva con "Incluir en el total" tildado y confirmar
+  que entra en el Subtotal sin editarlo a mano; reordenar una línea con las flechas; intentar mover
+  una línea de forma que rompería el orden de una referencia (debe bloquearse); editar los datos
+  del bloque (proyecto, término de pago) y confirmar que persiste.
+
+### Boundaries
+
+- No se permite cambiar el `type` de una línea existente desde la edición (line→sum, etc.) — para
+  eso, borrar y crear de nuevo. Fuera de alcance de este fix.
+- El reordenamiento y las referencias siguen sin permitir ciclos ni referencias hacia adelante,
+  ahora validado explícitamente en vez de fallar en silencio.
