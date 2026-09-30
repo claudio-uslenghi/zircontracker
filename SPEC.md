@@ -2425,3 +2425,176 @@ Conrado, y se agregó su refSlug al Subtotal de Ideal Protein.
   eso, borrar y crear de nuevo. Fuera de alcance de este fix.
 - El reordenamiento y las referencias siguen sin permitir ciclos ni referencias hacia adelante,
   ahora validado explícitamente en vez de fallar en silencio.
+
+---
+
+## Backlog: Facturación — pagos parciales, orden de previsualización y export a Excel
+
+*(Notas guardadas para especificar más adelante con `/agent-skills:spec` — no implementado todavía.)*
+
+### 1. Pagos parciales en facturas
+
+Hoy una factura (`ClientInvoice`) solo puede estar Pendiente/Vencida/Pagada, sin noción de pago
+parcial. Hace falta:
+- Un registro de **sub-pagos** por factura (fecha + monto de cada pago parcial recibido), en vez de
+  un único campo `Paid`/`DatePaid`.
+- Nuevo estado **"Pago parcial"**: cuando la suma de sub-pagos es mayor a 0 pero menor al total
+  facturado.
+- Transición automática a **"Pagada"** cuando la suma de los sub-pagos alcanza el total de la
+  factura.
+- A definir: qué pasa si la suma de sub-pagos *supera* el total — ¿se permite, se bloquea, se marca
+  como error?
+
+### 2. Reordenar las hojas de "Generar previsualización"
+
+En `/admin/billing` → tab Generar, hoy el orden es "Info para invoicing" (pivot Recurso × Proyecto)
+primero y "Facturas por cliente" después. Se pide invertirlo: **"Facturas por cliente" primero,
+"Info para invoicing" al final** — tanto en la previsualización en pantalla como en el orden de las
+hojas del `.xlsx` generado.
+
+### 3. Export a Excel con tabs de invoicing y horas por mes
+
+Andrés Zunino necesita, además de lo que ya vive en la base de ZirconTracker, que esa misma
+información se refleje en el Excel/planilla original: un **tab de invoicing por mes** y un **tab de
+horas por mes**.
+- Al generar un mes nuevo: crear esos dos tabs.
+- Al regenerar/actualizar un mes ya generado: actualizar esos mismos tabs en vez de duplicarlos
+  (mismo criterio que ya usamos para `ClientInvoice`: update, no duplicado).
+- A confirmar: ¿"el Excel original" es el `.xlsx` que ya se descarga desde Facturación, o la
+  planilla de Google Sheets real que usa Andrés? Si es la planilla de Google, hace falta definir
+  cómo se escribe ahí (la integración con Sheets en este proyecto era hasta ahora de solo lectura).
+
+---
+
+## Facturación — pagos parciales, orden de previsualización, sync a Google Sheets, UX y rol contador
+
+### Objective
+
+Cuatro frentes sobre Facturación, especificados juntos porque comparten superficie de código
+(`ClientInvoice`, `/admin/billing`, `InvoiceBlock`):
+
+1. Pagos parciales en facturas (backlog ya guardado arriba).
+2. Reordenar las hojas de la previsualización mensual (backlog ya guardado arriba).
+3. Sincronizar cada mes generado con la planilla real de Google Sheets que usa el equipo de
+   invoicing (Andrés Zunino) — dos tabs nuevos por mes, crear o actualizar según corresponda.
+4. Revisión de usabilidad de las 3 tabs de Facturación + qué haría falta para dar acceso a un
+   contador externo.
+
+### Hallazgos (investigación)
+
+#### Sobre el punto 3 — Google Sheets
+
+- **No tengo ninguna herramienta de escritura de Google Sheets en este entorno de chat** — solo
+  lectura (`read_file_content`, `download_file_content`, `get_file_metadata`) y creación de un
+  archivo *nuevo* en blanco (`create_file`, que no sirve para agregar una hoja a una planilla
+  existente). Esto significa que la sincronización **tiene que construirse como código real dentro
+  de la app** (paquete `googleapis`, con credenciales de una service account), igual que cualquier
+  otra feature — no es algo que yo pueda hacer "a mano" desde el chat.
+- Inspeccioné la planilla de pruebas que pasaste
+  (`1T3yvdh-FI41eux5QaPWU1vyFnTS2xW6NSjZaV-d6WnM`, "Copia para Testing de Info para invoicing",
+  101 tabs). Confirmé el **formato real que ya usa el equipo**, y buena noticia: es exactamente lo
+  que ya generamos hoy en el `.xlsx` de Facturación:
+  - Tab **"Invoicing `<Mes en inglés>` `<Año>`"** (ej. `Invoicing September 2026`) = fila por fila,
+    idéntico a nuestra Hoja 2 "Facturas por cliente" (columnas OK|Concepto|Precio|Horas|Total|
+    Comentario, mismos 10 bloques en el mismo orden).
+  - Tab **"Horas por proyecto `<Mes en español>` `<Año>`"** (ej. `Horas por proyecto Septiembre
+    2026`) = idéntico a nuestra Hoja 1 "Info para invoicing" (pivot Recurso × Proyecto, mismo orden
+    de columnas fijo).
+  - **Ojo con el detalle real**: el tab de Invoicing usa el mes en **inglés**, el de Horas en
+    **español** — no es un error, es la convención real de los últimos ~18 meses de la planilla
+    (antes de eso hay nombres inconsistentes: "Zircon - Marzo 2024", "Hours Zircon...", etc. — no
+    hace falta igualar esos históricos, solo seguir la convención vigente).
+  - **Hallazgo que hay que resolver antes de sincronizar nada de verdad**: en el tab real
+    `Invoicing September 2026` y su par de horas, aparece **"Diego Mortenssen"** (Fullstack
+    Developer, Infogain, 38/24/912 — y 176 hs totales repartidas entre "Bench (Internal Issues)" e
+    Infogain) — una persona que **no existe hoy como línea en el bloque Infogain de
+    "Configurar clientes"** (ahí solo están Luciana Diniz y Victor Córdoba). Si sincronizáramos
+    ahora mismo, el tab real perdería esa línea real. Hay que agregar a Diego (y revisar si hay
+    huecos similares en los otros 9 bloques) **antes** de habilitar cualquier escritura real.
+
+#### Sobre el punto 4 — Usabilidad y rol contador
+
+Revisé las 3 tabs en mobile (375px) y desktop, con la lupa de accesibilidad/touch targets/mobile-
+first que ya usamos en este proyecto:
+
+- **Generar**: las tablas anchas (pivot de 15 columnas, hoja de facturas con `min-w-[900px]`)
+  obligan a scroll horizontal agresivo en mobile — confirmado visualmente, la tabla de pivot se
+  corta a la tercera columna en un viewport de 375px. Los inputs de precio/cantidad dentro de la
+  hoja de facturas son `text-xs w-20`, chicos para tocar con el dedo. El botón final "Generar
+  facturas del mes" es una acción que escribe registros reales para hasta 10 clientes a la vez, y
+  **no tiene ningún paso de confirmación** — un click de más y ya se generaron/actualizaron
+  facturas reales.
+- **Facturas**: grilla de 12 columnas (`min-w-[1100px]`), scroll horizontal inevitable en cualquier
+  pantalla razonable. Las celdas editables son inputs sin borde que guardan solo (`onBlur`), sin
+  ninguna confirmación visual más allá de un dim momentáneo de la fila — fácil editar sin querer al
+  hacer scroll/tab, sin "deshacer".
+- **Configurar clientes**: la más densa de las tres — cada línea es un renglón `text-xs` con badge +
+  label + precio + persona + lápiz + basura + flechas subir/bajar, todo apretado. Los íconos de
+  reordenar/editar/borrar son de ~11-13px dentro de un área clickeable bastante menor a los 44×44px
+  mínimos recomendados. **Y esto no es teórico**: en esta misma sesión, un click perdido durante un
+  glitch de CSS ocultó 4 clientes reales (Infinite/Hover/Cash/Smartway) sin ningún diálogo de
+  confirmación de por medio — los reactivé al toque, pero es la prueba de que "Ocultar"/"Borrar" sin
+  confirmar es un riesgo real, no hipotético.
+- **Hallazgo de arquitectura para el acceso del contador**: hoy **todos** los endpoints de
+  Facturación (`/api/invoices`, `/api/admin/invoice-blocks/*`, `/api/reports/invoicing*`) usan
+  `requireAdmin()` — un chequeo de rol duro, no `checkPagePermission()` (que sí es el mecanismo que
+  ya existe en el proyecto para dar acceso granular a un rol no-admin a una página puntual, vía
+  `Role`/`PagePermission`/`UserRole`). Aunque le demos a un contador el permiso de página del tab
+  Facturas, **hoy sus llamadas a la API igual rebotarían con 403** — hay que separar qué endpoints
+  siguen siendo admin-only (Generar, Configurar clientes) de cuáles pueden abrirse a un nuevo rol
+  `contador` (listar/filtrar Facturas, editar `Paid`/`Comments`/sub-pagos).
+- **Funcionalidad candidata para un contador** (más allá de lo que ya existe): exportar la vista
+  filtrada de Facturas a CSV/Excel (distinto del `.xlsx` de Generar, que sigue siendo admin-only);
+  un resumen de cobranza (total pendiente, total vencido, aging 30/60/90 días) — hoy no existe
+  ningún dashboard de esto; registro de quién cambió `Paid`/`Comments` y cuándo (hoy solo hay
+  `updatedAt`, sin autor).
+
+### Decisiones a confirmar (ver preguntas)
+
+Dado el tamaño (4 frentes grandes, uno de ellos con una integración externa nueva), antes de
+implementar necesito que confirmes prioridad/alcance — ver preguntas al final de este mensaje.
+
+### Diseño (a alto nivel, se detalla más una vez confirmado el alcance)
+
+- **Pagos parciales**: nuevo modelo `InvoicePayment` (invoiceId, amount, date, comment), `paid`
+  pasa a derivarse (`sum(payments) >= total`) en vez de ser un booleano guardado; nuevo estado
+  `'Parcial'` en `computeInvoiceStatus()`.
+- **Orden de hojas**: cambio de una línea en `app/admin/billing/page.tsx` (orden de render) y en
+  `app/api/reports/invoicing/export/route.ts` (orden de `book_append_sheet`).
+- **Sync a Sheets**: `lib/google-sheets.ts` nuevo (usa `googleapis`), credenciales de service account
+  en variable de entorno (nunca committeadas, mismo criterio que el resto del proyecto), hook en el
+  mismo punto donde hoy se generan los `ClientInvoice` (`.../invoicing/export/route.ts`) para
+  crear/actualizar los dos tabs del mes.
+- **UX**: confirmación (modal o doble-click con deshacer) antes de Ocultar/Borrar en Configurar
+  clientes; sticky header en las tablas largas; inputs más grandes en mobile.
+- **Rol contador**: nuevo `Role` "contador", separar `requireAdmin()` de un nuevo
+  `requireBillingAccess()` (admin o página con permiso) en los endpoints de lectura/edición de
+  Facturas, dejando Generar/Configurar clientes exclusivamente admin.
+
+### Nota aparte (no bloquea, pero avisar)
+
+Encontré 3 registros reales de `ClientInvoice` para 2026-09 (Suku $5.310, Infogain $15.674,56, Ideal
+Protein total $7.635 con `Billed` en $1.120 — no coinciden) que no generé yo a propósito en esta
+conversación — probablemente efecto colateral de la sesión de QA independiente de la tarea anterior.
+Setiembre no cerró todavía, así que probablemente no se llegó a facturar de verdad, pero el
+desajuste Total/Billed de Ideal Protein en particular conviene revisarlo antes de que alguien lo
+use para facturar de verdad.
+
+---
+
+## Implementado (de los 4 frentes confirmados)
+
+1. **Orden de hojas**: invertido en previsualización y en el `.xlsx` — "Facturas por cliente" primero, "Info para invoicing" al final.
+2. **Confirmación antes de Ocultar/Borrar** en Configurar clientes (bloque y línea), usando el `confirmDialog()` ya existente en el proyecto.
+3. **Reconciliación de los 10 bloques contra la planilla real**: agregados los 2 gaps reales encontrados — "Diego Mortenssen" (Fullstack Developer, $38/h) en Infogain, y "Yan" como persona por defecto de la línea "Software dev" de Ideal Protein. El resto de la gente de la planilla real trabaja en proyectos no vinculados a ningún bloque de facturación (Bench/Internal Issues, SCC-Holcim, etc.) — no requieren línea.
+4. **Pagos parciales**: nuevo modelo `InvoicePayment` (reemplaza los campos `paid`/`datePaid` de `ClientInvoice`, migrados a un pago sintético si hubiera alguno con `paid=true` — no había ninguno en producción). Nuevo estado `Parcial`. Decisión de implementación no especificada explícitamente y resuelta por mi cuenta: **una factura vencida y parcialmente pagada muestra "Vencida", no "Parcial"** — el atraso importa más que el pago parcial para el seguimiento de cobranza. Fácil de cambiar si no es lo que se quiere.
+
+Verificado en el browser contra la Turso real: pago parcial ($500 sobre $1.120 facturado) → Outstanding $620, estado "Parcial"; segundo pago que suma $1.200 total (sobrepago) → Outstanding **-$80** (negativo, como se pidió), estado "Pagada"; borrado de pagos recalcula todo correctamente. Datos de prueba limpiados al terminar.
+
+## Pendiente (bloqueado en las credenciales de Google)
+
+- **Sync a Google Sheets** (crear/actualizar los tabs "Invoicing `<Mes>`" / "Horas por proyecto `<Mes>`") y **rol contador** — no implementados todavía. El primero necesita la service account (ver instrucciones que te pasé en el chat); el segundo no tiene bloqueo técnico, se puede encarar en cualquier momento.
+
+## Nota aparte, no resuelta en esta tanda
+
+Los 3 registros reales de setiembre 2026 que aparecieron sin que los generara a propósito (efecto colateral de la sesión de QA anterior) siguen ahí — uno de ellos (Ideal Protein) con `Billed` ($1.120) muy por debajo del `Total` real actual ($7.635). Setiembre no cerró, así que probablemente no hay impacto, pero convendría que lo revises antes de generar la factura real del mes.

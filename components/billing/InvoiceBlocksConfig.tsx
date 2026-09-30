@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import { toast } from '@/lib/toast'
+import { confirmDialog } from '@/lib/confirm-dialog'
 
 interface Resource { id: number; name: string }
 interface Project { id: number; name: string }
@@ -399,6 +400,11 @@ function ItemRow({
   }
 
   const removeItem = async () => {
+    const ok = await confirmDialog({
+      title: `¿Borrar la línea "${item.label || '(sin label)'}"?`,
+      description: 'No se puede deshacer. Si otra línea la usa como base de un subtotal, el borrado se va a rechazar.',
+    })
+    if (!ok) return
     try {
       await api(`/api/admin/invoice-blocks/${block.id}/items/${item.id}`, { method: 'DELETE' })
       onChanged()
@@ -442,6 +448,15 @@ function BlockRow({ block, projects, onChanged }: { block: Block; projects: Proj
   const [addingLine, setAddingLine] = useState(false)
 
   const toggleActive = async () => {
+    if (block.active) {
+      const ok = await confirmDialog({
+        title: `¿Ocultar "${block.client}"?`,
+        description: 'Sale de la generación de meses futuros. Sus facturas históricas no se tocan, y se puede reactivar cuando quieras.',
+        confirmLabel: 'Ocultar',
+        variant: 'destructive',
+      })
+      if (!ok) return
+    }
     try {
       await api(`/api/admin/invoice-blocks/${block.id}`, { method: 'PATCH', body: JSON.stringify({ active: !block.active }) })
       onChanged()
@@ -451,6 +466,12 @@ function BlockRow({ block, projects, onChanged }: { block: Block; projects: Proj
   }
 
   const remove = async () => {
+    const ok = await confirmDialog({
+      title: `¿Borrar "${block.client}" definitivamente?`,
+      description: 'No se puede deshacer. Solo funciona si este cliente nunca generó una factura — si tiene historial, usá "Ocultar" en su lugar.',
+      confirmLabel: 'Borrar',
+    })
+    if (!ok) return
     try {
       await api(`/api/admin/invoice-blocks/${block.id}`, { method: 'DELETE' })
       toast({ title: 'Cliente eliminado', variant: 'success' })

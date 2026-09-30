@@ -78,10 +78,11 @@ export async function POST(req: NextRequest) {
   }
 
   const XLSX = await import('xlsx')
-  const ws = XLSX.utils.aoa_to_sheet(rows)
+  const infoSheet = XLSX.utils.aoa_to_sheet(rows)
   const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'Info para invoicing')
 
+  // "Facturas por cliente" goes first, "Info para invoicing" last — the
+  // accountant works off the invoice sheet, the pivot is backup detail.
   const invoiceLines: Record<string, LineState> | undefined = body.invoiceLines
   let recordsSummary = ''
   if (invoiceLines) {
@@ -132,6 +133,8 @@ export async function POST(req: NextRequest) {
     const updated = blockTotals.length - created
     recordsSummary = `created=${created};updated=${updated}`
   }
+
+  XLSX.utils.book_append_sheet(wb, infoSheet, 'Info para invoicing')
 
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
 

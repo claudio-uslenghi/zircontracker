@@ -189,13 +189,29 @@ model ClientInvoice {
   total       Float
   billed      Float
   dateInv     DateTime
-  paid        Boolean   @default(false)
-  datePaid    DateTime?
   comments    String    @default("")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  payments InvoicePayment[]
+
   @@unique([month, blockId])
+}
+
+// One row per partial (or full) payment received against a ClientInvoice.
+// Paid/Vencida/Parcial/Pendiente and Outstanding are always derived from the
+// sum of these — never stored — so they can't go stale. Replaces the old
+// ClientInvoice.paid/datePaid booleans (migrated into a synthetic row here,
+// see scripts/add-invoice-payments.ts).
+model InvoicePayment {
+  id        Int      @id @default(autoincrement())
+  invoiceId Int
+  amount    Float
+  date      DateTime
+  comment   String   @default("")
+  createdAt DateTime @default(now())
+
+  invoice ClientInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
 model InvoiceBlock {
