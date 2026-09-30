@@ -84,7 +84,7 @@ function PivotSection({
     <div className="border border-blue-200 rounded-lg p-5 bg-white space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-base font-semibold text-gray-700">Info para invoicing</span>
-        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Hoja 1 · Recurso × Proyecto</span>
+        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Hoja 2 · Recurso × Proyecto</span>
       </div>
 
       {warnedItems.length > 0 && (
@@ -177,7 +177,7 @@ function InvoiceSection({
     <div className="border border-green-200 rounded-lg p-5 bg-white space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-base font-semibold text-gray-700">Facturas por cliente</span>
-        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Hoja 2 · Precio × Horas = Total</span>
+        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Hoja 1 · Precio × Horas = Total</span>
       </div>
       <p className="text-xs text-gray-500">
         Las horas salen de las horas cargadas de la persona en el proyecto del cliente (enteros). Podés cambiar la persona,
@@ -380,7 +380,7 @@ function BillingReport() {
     <div className="space-y-4">
       <div className="border border-gray-200 rounded-lg p-5 bg-white space-y-3">
         <p className="text-sm text-gray-500">
-          Genera el archivo mensual para invoicing/contador con dos hojas: el pivot Recurso × Proyecto y las facturas por cliente.
+          Genera el archivo mensual para invoicing/contador con dos hojas: las facturas por cliente y el pivot Recurso × Proyecto.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <input
@@ -402,8 +402,8 @@ function BillingReport() {
 
       {pivot && invoice && (
         <>
-          <PivotSection preview={pivot} excluded={excluded} onToggle={toggleExcluded} />
           <InvoiceSection data={invoice} states={lineStates} setStates={setLineStates} />
+          <PivotSection preview={pivot} excluded={excluded} onToggle={toggleExcluded} />
           <button
             onClick={handleExport}
             disabled={exporting}
