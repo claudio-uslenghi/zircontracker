@@ -353,6 +353,7 @@ function BillingReport() {
         throw new Error(data.error ?? 'Error al generar el archivo')
       }
       const summary = res.headers.get('X-Invoice-Records-Summary')
+      const sheetsSync = res.headers.get('X-Sheets-Sync-Status')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -368,6 +369,14 @@ function BillingReport() {
           description: `${created} registro${created !== 1 ? 's' : ''} nuevo${created !== 1 ? 's' : ''}, ${updated} actualizado${updated !== 1 ? 's' : ''}.`,
           variant: 'success',
         })
+      }
+      if (sheetsSync === 'ok') {
+        toast({ title: 'Google Sheets sincronizado', description: 'Se actualizaron los dos tabs del mes en la planilla real.', variant: 'success' })
+      } else if (sheetsSync === 'skipped') {
+        toast({ title: 'Google Sheets no sincronizado', description: 'No hay credenciales configuradas — solo se generó el .xlsx.', variant: 'warning' })
+      } else if (sheetsSync?.startsWith('error:')) {
+        const msg = decodeURIComponent(sheetsSync.slice('error:'.length))
+        toast({ title: 'No se pudo sincronizar con Google Sheets', description: msg, variant: 'error' })
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
