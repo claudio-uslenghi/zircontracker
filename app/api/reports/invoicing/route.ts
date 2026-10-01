@@ -3,13 +3,14 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { INVOICING_PROJECT_ORDER, INVOICING_RESOURCE_ORDER, resolveInvoicingOrder } from '@/lib/invoicing-report'
+import { sortByEffectiveOrder } from '@/lib/pivot-order'
 
-// Preview for the monthly "Info para invoicing" report: resolves the fixed
-// resource/project order against the real DB, sums hours per (resource,
-// project) for the given month, and flags anything that doesn't resolve to
-// a real Resource/Project or has zero hours that month — the UI lets the
-// admin decide whether to still include those in the final export.
+// Preview for the monthly "Info para invoicing" report: Proyecto/Recurso
+// columns & rows come straight from the DB (invoicingHidden: false, ordered
+// by invoicingOrder — see wizard step 1, lib/pivot-order.ts), not from a
+// hardcoded list anymore, so there's nothing that can fail to "exist" — the
+// only thing worth flagging is a visible resource/project with zero hours
+// this month (informational, not actionable here; hiding happens in step 1).
 export async function GET(req: NextRequest) {
   try {
     await requireAdmin()
@@ -26,20 +27,13 @@ export async function GET(req: NextRequest) {
   const to = new Date(Date.UTC(y, m, 0, 23, 59, 59))
 
   const [allResources, allProjects] = await Promise.all([
-    prisma.resource.findMany({ select: { id: true, name: true } }),
-    prisma.project.findMany({ select: { id: true, name: true } }),
+    prisma.resource.findMany({ where: { invoicingHidden: false }, select: { id: true, name: true, invoicingOrder: true } }),
+    prisma.project.findMany({ where: { invoicingHidden: false }, select: { id: true, name: true, invoicingOrder: true } }),
   ])
+  const resources = sortByEffectiveOrder(allResources)
+  const projects = sortByEffectiveOrder(allProjects)
 
-  const resolvedResources = resolveInvoicingOrder(INVOICING_RESOURCE_ORDER, allResources.map((r) => r.name))
-  const resolvedProjects = resolveInvoicingOrder(INVOICING_PROJECT_ORDER, allProjects.map((p) => p.name))
-
-  const resourceIdByName = new Map(allResources.map((r) => [r.name, r.id]))
-  const projectIdByName = new Map(allProjects.map((p) => [p.name, p.id]))
-
-  const resourceIds = resolvedResources
-    .filter((r) => r.resolvedName)
-    .map((r) => resourceIdByName.get(r.resolvedName!)!)
-
+  const resourceIds = resources.map((r) => r.id)
   const grouped = resourceIds.length
     ? await prisma.timeEntry.groupBy({
         by: ['resourceId', 'projectId'],
@@ -51,47 +45,26 @@ export async function GET(req: NextRequest) {
   const hoursMap = new Map<string, number>()
   for (const g of grouped) hoursMap.set(`${g.resourceId}|${g.projectId}`, g._sum.hours ?? 0)
 
-  const resources = resolvedResources.map((r) => {
-    const resourceId = r.resolvedName ? resourceIdByName.get(r.resolvedName) ?? null : null
-    const hoursByProject: Record<string, number> = {}
+  const resourceRows = resources.map((r) => {
+    const hoursByProject: Record<number, number> = {}
     let total = 0
-    for (const p of resolvedProjects) {
-      const projectId = p.resolvedName ? projectIdByName.get(p.resolvedName) ?? null : null
-      const hours = resourceId != null && projectId != null ? hoursMap.get(`${resourceId}|${projectId}`) ?? 0 : 0
-      hoursByProject[p.label] = Math.round(hours * 100) / 100
+    for (const p of projects) {
+      const hours = hoursMap.get(`${r.id}|${p.id}`) ?? 0
+      hoursByProject[p.id] = Math.round(hours * 100) / 100
       total += hours
     }
-    return {
-      label: r.label,
-      resolvedName: r.resolvedName,
-      exists: resourceId != null,
-      hasData: resourceId != null && total > 0,
-      total: Math.round(total * 100) / 100,
-      hoursByProject,
-    }
+    return { id: r.id, name: r.name, total: Math.round(total * 100) / 100, hasData: total > 0, hoursByProject }
   })
 
-  const projects = resolvedProjects.map((p) => {
-    const projectId = p.resolvedName ? projectIdByName.get(p.resolvedName) ?? null : null
-    const total = resources.reduce((sum, r) => sum + (r.hoursByProject[p.label] ?? 0), 0)
-    return {
-      label: p.label,
-      resolvedName: p.resolvedName,
-      exists: projectId != null,
-      hasData: projectId != null && total > 0,
-      total: Math.round(total * 100) / 100,
-    }
+  const projectRows = projects.map((p) => {
+    const total = resourceRows.reduce((sum, r) => sum + (r.hoursByProject[p.id] ?? 0), 0)
+    return { id: p.id, name: p.name, total: Math.round(total * 100) / 100, hasData: total > 0 }
   })
 
-  const warnings: string[] = []
-  for (const r of resources) {
-    if (!r.exists) warnings.push(`Recurso "${r.label}" no existe en la base.`)
-    else if (!r.hasData) warnings.push(`"${r.resolvedName}" no tiene horas cargadas en ${month}.`)
-  }
-  for (const p of projects) {
-    if (!p.exists) warnings.push(`Proyecto "${p.label}" no existe en la base.`)
-    else if (!p.hasData) warnings.push(`Proyecto "${p.resolvedName}" no tiene horas cargadas en ${month}.`)
-  }
+  const warnings: string[] = [
+    ...resourceRows.filter((r) => !r.hasData).map((r) => `"${r.name}" no tiene horas cargadas en ${month}.`),
+    ...projectRows.filter((p) => !p.hasData).map((p) => `"${p.name}" no tiene horas cargadas en ${month}.`),
+  ]
 
-  return NextResponse.json({ month, resources, projects, warnings })
+  return NextResponse.json({ month, resources: resourceRows, projects: projectRows, warnings })
 }

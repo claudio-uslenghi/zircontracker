@@ -3,16 +3,17 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
-import { INVOICING_PROJECT_ORDER, INVOICING_RESOURCE_ORDER, resolveInvoicingOrder } from '@/lib/invoicing-report'
+import { sortByEffectiveOrder } from '@/lib/pivot-order'
 import { computeInvoice, computedRowsToCells, getBlockTotals, type LineState } from '@/lib/invoice-sheet'
 import { getInvoiceTemplate } from '@/lib/invoice-template'
 import { lastDayOfMonth } from '@/lib/invoice-records'
 import { syncInvoicingMonth } from '@/lib/google-sheets'
 
-// Generates the final .xlsx for the monthly "Info para invoicing" report,
-// scoped to exactly the resource/project labels the admin confirmed in the
-// preview (app/api/reports/invoicing/route.ts) — anything they unchecked
-// there (no match in the DB, or no hours that month) is left out here.
+// Generates the final .xlsx for the monthly "Info para invoicing" report.
+// The resource/project universe is whatever is visible in the pivot (wizard
+// step 1 — invoicingHidden: false, see lib/pivot-order.ts) at the moment of
+// generation — no more client-supplied include lists, hiding is curated
+// ahead of time and persists on its own.
 // When `invoiceLines` is sent (the edited state of the "Facturas" preview), a
 // second sheet "Facturas" is added, with live formulas in the Total column.
 export async function POST(req: NextRequest) {
@@ -24,8 +25,6 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json()
   const month: string = body.month
-  const includeResourceLabels: string[] = body.includeResources ?? []
-  const includeProjectLabels: string[] = body.includeProjects ?? []
 
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
     return NextResponse.json({ error: 'Parámetro month inválido (YYYY-MM)' }, { status: 400 })
@@ -34,22 +33,13 @@ export async function POST(req: NextRequest) {
   const from = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0))
   const to = new Date(Date.UTC(y, m, 0, 23, 59, 59))
 
-  const [allResources, allProjects] = await Promise.all([
-    prisma.resource.findMany({ select: { id: true, name: true } }),
-    prisma.project.findMany({ select: { id: true, name: true } }),
+  const [visibleResources, visibleProjects] = await Promise.all([
+    prisma.resource.findMany({ where: { invoicingHidden: false }, select: { id: true, name: true, invoicingOrder: true } }),
+    prisma.project.findMany({ where: { invoicingHidden: false }, select: { id: true, name: true, invoicingOrder: true } }),
   ])
-
-  const resolvedResources = resolveInvoicingOrder(INVOICING_RESOURCE_ORDER, allResources.map((r) => r.name))
-    .filter((r) => includeResourceLabels.includes(r.label))
-  const resolvedProjects = resolveInvoicingOrder(INVOICING_PROJECT_ORDER, allProjects.map((p) => p.name))
-    .filter((p) => includeProjectLabels.includes(p.label))
-
-  const resourceIdByName = new Map(allResources.map((r) => [r.name, r.id]))
-  const projectIdByName = new Map(allProjects.map((p) => [p.name, p.id]))
-
-  const resourceIds = resolvedResources
-    .filter((r) => r.resolvedName)
-    .map((r) => resourceIdByName.get(r.resolvedName!)!)
+  const resources = sortByEffectiveOrder(visibleResources)
+  const projects = sortByEffectiveOrder(visibleProjects)
+  const resourceIds = resources.map((r) => r.id)
 
   const grouped = resourceIds.length
     ? await prisma.timeEntry.groupBy({
@@ -62,20 +52,18 @@ export async function POST(req: NextRequest) {
   const hoursMap = new Map<string, number>()
   for (const g of grouped) hoursMap.set(`${g.resourceId}|${g.projectId}`, g._sum.hours ?? 0)
 
-  const header = ['Recurso', 'Total Horas', ...resolvedProjects.map((p) => p.resolvedName ?? p.label)]
+  const header = ['Recurso', 'Total Horas', ...projects.map((p) => p.name)]
   const rows: (string | number)[][] = [header]
 
-  for (const r of resolvedResources) {
-    const resourceId = r.resolvedName ? resourceIdByName.get(r.resolvedName) : undefined
+  for (const r of resources) {
     const rowValues: number[] = []
     let total = 0
-    for (const p of resolvedProjects) {
-      const projectId = p.resolvedName ? projectIdByName.get(p.resolvedName) : undefined
-      const hours = resourceId != null && projectId != null ? hoursMap.get(`${resourceId}|${projectId}`) ?? 0 : 0
+    for (const p of projects) {
+      const hours = hoursMap.get(`${r.id}|${p.id}`) ?? 0
       rowValues.push(Math.round(hours * 100) / 100)
       total += hours
     }
-    rows.push([(r.resolvedName ?? r.label).trim(), Math.round(total * 100) / 100, ...rowValues])
+    rows.push([r.name, Math.round(total * 100) / 100, ...rowValues])
   }
 
   const XLSX = await import('xlsx')
