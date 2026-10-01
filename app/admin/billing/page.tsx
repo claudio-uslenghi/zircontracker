@@ -385,11 +385,48 @@ function GenerateSection({
 }
 
 const WIZARD_STEPS = [
-  { n: 1, key: 'config', label: 'Proyectos y personas' },
+  { n: 1, key: 'config', label: 'Configuración' },
   { n: 2, key: 'pivot', label: 'Info para invoicing' },
   { n: 3, key: 'invoice', label: 'Facturas por cliente' },
   { n: 4, key: 'generate', label: 'Generar' },
 ] as const
+
+// Paso 1: ocultar/mostrar/reordenar Proyectos y Personas (PivotConfig, decide
+// qué entra al pivot de horas) y la estructura de facturación por cliente
+// (InvoiceBlocksConfig — bloques/líneas/tarifas, el mismo componente que usa
+// la tab de primer nivel "Configurar clientes", reusado acá sin duplicar
+// lógica). Dos modelos de datos distintos a propósito, conviven en el mismo
+// paso porque las dos son "configuración" que un admin ajusta antes de
+// generar — ver SPEC.md "fusionar Configurar clientes dentro del paso 1".
+const STEP1_SUBTABS = [
+  { key: 'projects', label: 'Proyectos y personas' },
+  { key: 'clients', label: 'Clientes de facturación' },
+] as const
+type Step1Sub = (typeof STEP1_SUBTABS)[number]['key']
+
+function Step1({ sub, onSubChange }: { sub: Step1Sub; onSubChange: (s: Step1Sub) => void }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1 border-b border-gray-200 -mt-1">
+        {STEP1_SUBTABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => onSubChange(t.key)}
+            className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              sub === t.key
+                ? 'border-[#0170B9] text-[#0170B9]'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {sub === 'projects' && <PivotConfig />}
+      {sub === 'clients' && <InvoiceBlocksConfig />}
+    </div>
+  )
+}
 
 function WizardStepper({ step, onJump }: { step: number; onJump: (n: number) => void }) {
   return (
@@ -422,6 +459,7 @@ function Wizard({ onGenerated }: { onGenerated: (month: string) => void }) {
 
   const step = Math.min(4, Math.max(1, Number(searchParams.get('step') ?? '1') || 1))
   const month = searchParams.get('month') ?? defaultMonth
+  const sub = (searchParams.get('sub') as Step1Sub) ?? 'projects'
   const [lineStates, setLineStates] = useState<Record<string, LineState>>({})
 
   const setParams = (patch: Record<string, string>) => {
@@ -478,7 +516,7 @@ function Wizard({ onGenerated }: { onGenerated: (month: string) => void }) {
         )}
       </div>
 
-      {step === 1 && <PivotConfig />}
+      {step === 1 && <Step1 sub={sub} onSubChange={(s) => setParams({ step: '1', sub: s })} />}
 
       {step >= 2 && loading && <p className="text-sm text-gray-400 py-8 text-center">Cargando...</p>}
       {step >= 2 && loadError && (
@@ -494,7 +532,7 @@ function Wizard({ onGenerated }: { onGenerated: (month: string) => void }) {
           data={invoiceSheet}
           states={lineStates}
           setStates={setLineStates}
-          onGoToConfig={() => setParams({ tab: 'config' })}
+          onGoToConfig={() => setParams({ step: '1', sub: 'clients' })}
         />
       )}
 
