@@ -2611,3 +2611,213 @@ Una vez recibida la service account (`zircontracker-sheets-sync@invocing-test.ia
 ## Nota aparte, no resuelta en esta tanda
 
 Los 3 registros reales de setiembre 2026 que aparecieron sin que los generara a propósito (efecto colateral de la sesión de QA anterior) siguen ahí — uno de ellos (Ideal Protein) con `Billed` ($1.120) muy por debajo del `Total` real actual ($7.635). Setiembre no cerró, así que probablemente no hay impacto, pero convendría que lo revises antes de generar la factura real del mes.
+
+---
+
+# Spec: Wizard de facturación mensual (Paso 1-4) + lista de proyectos/personas editable
+
+## Objetivo
+
+Reestructurar `/admin/billing` como un flujo guiado de 4 pasos para la generación mensual, en vez
+de 3 tabs sueltas. Cada paso es independiente y navegable (no estrictamente lineal — se puede
+consultar cualquier paso en cualquier momento), con el mes elegido compartido entre los pasos 2-4.
+
+## Decisiones confirmadas con el usuario
+
+1. **Qué es "proyecto" en el paso 1**: no son los bloques de "Configurar clientes" (que siguen
+   existiendo tal cual, ver punto 3) — es la lista de Proyecto × Recurso que hoy arma el pivot
+   "Info para invoicing". Hoy esa lista está **hardcodeada** en `lib/invoicing-report.ts`
+   (`INVOICING_PROJECT_ORDER`/`INVOICING_RESOURCE_ORDER`, con alias `lookupNames` para matchear
+   nombres reales) — para agregar o sacar algo de ahí hace falta que yo edite código y haga deploy.
+   El paso 1 reemplaza eso por una pantalla real: alta, orden y ocultar/mostrar, editable por un
+   admin sin tocar código.
+2. **Alcance del ocultar**: aplica tanto a Proyectos (columnas del pivot) como a Recursos/personas
+   (filas) — hoy ambos se "excluyen" con un checkbox que se resetea cada vez que se vuelve a entrar
+   a la página; pasa a ser persistente (una vez oculto, no vuelve a aparecer solo).
+3. **"Configurar clientes" y "Facturas" siguen siendo accesibles por fuera del wizard** — no se
+   fusionan ni se esconden detrás del flujo de 4 pasos. Editar una línea/tarifa de un bloque, o
+   cargar un pago en una factura vieja, sigue siendo posible en cualquier momento sin pasar por el
+   wizard. El wizard las referencia (paso 3 linkea a "Configurar clientes" por si falta una línea;
+   paso 4 reutiliza el mismo listado de "Facturas", pre-filtrado por mes) pero no las reemplaza.
+4. **Alta automática**: un Proyecto o Recurso nuevo (creado en `/projects` o `/resources`, fuera de
+   esta pantalla) aparece automáticamente, **visible por default**, en el pivot del mes siguiente —
+   no hace falta que un admin lo agregue a mano. Se oculta a mano si no corresponde facturarlo.
+
+## Hallazgo que este cambio resuelve de paso
+
+Al pasar de la lista hardcodeada a los Proyectos/Recursos reales de la base, **"Diego Mortenssen"
+deja de faltar en el pivot de horas**: hoy está en el bloque de facturación de Infogain (agregado en
+una sesión anterior) pero nunca estuvo en `INVOICING_RESOURCE_ORDER`, así que sus horas no
+aparecían en "Info para invoicing" aunque sí se facturaran — era un hueco real, no solo una mejora
+de usabilidad. Con "alta automática", esto se corrige solo apenas se corra la migración.
+
+## Diseño
+
+### Modelo de datos
+
+Dos campos nuevos, directo en `Project` y `Resource` (no una tabla aparte — son exactamente esas
+entidades las que se muestran/ocultan):
+
+```prisma
+model Project {
+  // ...existentes
+  invoicingHidden Boolean @default(false)
+  invoicingOrder  Int?    // null = sin orden explícito, va al final (por id/nombre)
+}
+model Resource {
+  // ...existentes
+  invoicingHidden Boolean @default(false)
+  invoicingOrder  Int?
+}
+```
+
+`invoicingOrder` nulo = "recién aparecido, todavía no reordenado a mano" — se lista al final,
+ordenado alfabéticamente entre sí. Mismo esquema de orden disperso (pasos de 1000) que ya usa
+`lib/invoice-block-order.ts` para las líneas de un bloque, para poder insertar "entre dos" sin
+tener que resecuenciar todo.
+
+**Migración** (`scripts/add-invoicing-pivot-fields.ts`, idempotente, mismo patrón que las
+anteriores contra Turso): agrega las columnas; siembra `invoicingOrder` para cada entrada de
+`INVOICING_PROJECT_ORDER`/`INVOICING_RESOURCE_ORDER` que matchee un Proyecto/Recurso real (vía
+`resolveInvoicingOrder`, igual que hace hoy el pivot), preservando el orden curado actual en pasos
+de 1000. Las entradas que hoy no matchean nada (ninguna detectada por ahora, pero si apareciera) se
+saltean — no hay nada real que sembrar. El resto de los Proyectos/Recursos reales que no estén en
+esas listas (incluido Diego Mortenssen) quedan con `invoicingOrder: null`, `invoicingHidden: false`
+— van a aparecer al final, visibles, en el próximo pivot.
+
+Una vez corrida la migración en producción, `lib/invoicing-report.ts` (las listas hardcodeadas +
+`resolveInvoicingOrder`) se borra del todo — ya no lo usa nada.
+
+**Nota de alcance**: ocultar un Proyecto/Recurso es **a futuro únicamente** — no toca los
+`ClientInvoice` ya generados (sus montos quedan congelados al momento de generación, como siempre),
+solo afecta qué entra la próxima vez que se arme el pivot/factura de un mes nuevo.
+
+### Rutas nuevas
+
+- `GET /api/admin/invoicing-pivot` (admin) — devuelve `{ projects: [...], resources: [...] }`, cada
+  uno `{ id, name, invoicingHidden, invoicingOrder, effectiveOrder }`, ya ordenados.
+- `PATCH /api/admin/invoicing-pivot/projects/[id]` — `{ hidden?: boolean }`.
+- `PATCH /api/admin/invoicing-pivot/projects/[id]/move` — `{ direction: 'up'|'down' }` (swap de
+  orden con el vecino, mismo patrón que `invoice-blocks/[id]/items/[itemId]/move`).
+- Mismos dos endpoints para `resources` en vez de `projects`.
+
+### Rutas que cambian
+
+- `GET /api/reports/invoicing` (pivot) y `POST /api/reports/invoicing/export`: dejan de usar
+  `INVOICING_PROJECT_ORDER`/`INVOICING_RESOURCE_ORDER` + `includeResources`/`includeProjects` del
+  body — ahora arman la lista directo de `prisma.project.findMany({ where: { invoicingHidden: false } })`
+  / mismo para `resource`, ordenados por `effectiveOrder`. Ya no hay "labels" que no resuelven a
+  nada real (porque la lista ES la base), así que tampoco hace falta el flag `exists` ni los avisos
+  accionables — como mucho, una nota pasiva "sin horas este mes" a título informativo.
+
+### Componentes
+
+`app/admin/billing/page.tsx` pasa a tener 3 tabs de primer nivel: **Wizard** (nuevo, default),
+**Facturas** (sin cambios, `InvoicesTable`), **Configurar clientes** (sin cambios,
+`InvoiceBlocksConfig`) — reemplaza a la tab "Generar" actual.
+
+El tab **Wizard** tiene su propio stepper interno de 4 pasos (números clickeables, no lineal — se
+puede saltar a cualquier paso), con el mes elegido como estado compartido entre los pasos 2-4
+(query params en la URL: `?step=2&month=2026-10`, para que cada paso sea linkeable/recargable):
+
+1. **Proyectos y personas** (nuevo componente `PivotConfig.tsx`): dos listas (Proyectos /
+   Recursos), cada fila con nombre, toggle ocultar/mostrar, flechas subir/bajar (mismo patrón visual
+   que ya usa `InvoiceBlocksConfig` para las líneas). Buscador simple por nombre si la lista es
+   larga. No depende del mes elegido.
+2. **Info para invoicing** (hoy `PivotSection`, simplificado): mismo pivot Recurso × Proyecto, pero
+   de solo lectura — sin checkboxes de exclusión (eso ahora vive en el paso 1). Si algo no tiene
+   horas ese mes se muestra igual, con una nota pasiva, no una acción.
+3. **Facturas por cliente** (hoy `InvoiceSection`, sin cambios funcionales) — agrega un link "¿Falta
+   una línea o cambió un precio? Ir a Configurar clientes" (abre esa tab aparte, no pierde el estado
+   del wizard).
+4. **Generar**: mismo botón/lógica de hoy (`handleExport`, crea/actualiza `ClientInvoice`, descarga
+   el `.xlsx`, sync a Sheets) — al terminar con éxito, en vez de quedarse en la misma pantalla,
+   navega a la tab **Facturas** con el filtro de mes ya aplicado (`InvoicesTable` necesita un prop
+   `initialMonth` nuevo).
+
+## Testing strategy
+
+Cambio grande (schema + rutas nuevas + 2 rutas existentes modificadas + reestructuración de
+componentes) — typecheck + build primero, después QA en vivo contra la Turso real con el browser
+(fixtures descartables donde haga falta), y dado el tamaño, spawneo un subagente
+`agent-skills:test-engineer` independiente antes de dar la tarea por terminada, como indica la
+regla fija del CLAUDE.md.
+
+## Boundaries
+
+- **Ask first**: ninguna acción destructiva nueva más allá de lo ya cubierto por `confirmDialog`
+  existente (ocultar un proyecto/persona es reversible, no hace falta confirmación extra).
+- **Never**: tocar `/api/invoices`, `InvoicesTable` (más allá de agregarle el prop `initialMonth`) o
+  el modelo `InvoicePayment` — quedan fuera de este cambio.
+
+## Implementado
+
+Todo lo descripto arriba se implementó tal cual quedó especificado:
+
+- **Schema**: `Project`/`Resource` ganaron `invoicingHidden`/`invoicingOrder`. Migración idempotente
+  `scripts/add-invoicing-pivot-fields.ts` ya corrida contra producción: sembró el orden curado
+  actual (14 proyectos, 21 personas) y dejó el resto (25 proyectos, 17 personas — incluido **Diego
+  Mortenssen**) con `invoicingOrder: null`, visibles por default.
+- **`lib/pivot-order.ts`** (nuevo): `listPivotItems`/`setPivotHidden`/`movePivotItem`/
+  `sortByEffectiveOrder`. A diferencia de `lib/invoice-block-order.ts` no usa orden disperso para
+  insertar — cada "mover" resecuencia la lista completa a valores limpios de a 1000 (a esta escala,
+  más simple y sin casos borde).
+- **Rutas nuevas**: `GET /api/admin/invoicing-pivot`, `PATCH .../projects/[id]`,
+  `PATCH .../projects/[id]/move`, y los mismos dos para `resources`.
+- **Rutas reescritas**: `GET /api/reports/invoicing` y `POST /api/reports/invoicing/export` ya no
+  dependen de `lib/invoicing-report.ts` (borrado) ni de `includeResources`/`includeProjects` —
+  arman la lista directo de `Project`/`Resource` con `invoicingHidden: false`.
+- **`components/billing/PivotConfig.tsx`** (nuevo): paso 1, dos listas (Proyectos/Personas) con
+  buscador, ocultar/mostrar y flechas subir/bajar — mismo lenguaje visual que `InvoiceBlocksConfig`.
+- **`app/admin/billing/page.tsx`**: reestructurado a 3 tabs (Wizard/Facturas/Configurar clientes),
+  con el Wizard manejando sus 4 pasos vía query params (`?tab=wizard&step=2&month=2026-10`) —
+  bookmarkeable/recargable, cada paso consultable sin perder el estado de los otros. `PivotSection`
+  (paso 2) pasó a ser de solo lectura. `InvoicesTable` ganó el prop `initialMonth`.
+
+### Verificación
+
+`npx tsc --noEmit`, `npm run lint` y `npm run build` limpios. QA en vivo en el browser (dev server
+local contra la Turso real), con un usuario admin descartable creado para la sesión y borrado al
+terminar (junto con todo dato de prueba — mes ficticio `2030-02`, tabs de Sheets de prueba, el
+`ClientInvoice` que generó):
+
+- **Paso 1**: ocultar/mostrar y mover (subir/bajar) un proyecto y una persona real, confirmado
+  persistente vía refetch, revertido al estado original al terminar. Buscador probado. Confirmado
+  que **Diego Mortenssen** ya aparece en la lista de Personas (el hueco que motivó este cambio).
+- **Paso 2**: datos reales de horas (agosto 2026) correctamente alineados por proyecto/persona.
+- **Paso 3**: datos reales, y el link "Ir a Configurar clientes" navega correctamente a esa tab sin
+  perder el paso/mes del wizard (confirmado volviendo atrás).
+- **Paso 4 → Generar**: con el mes ficticio 2030-02, el flujo completo funcionó de punta a punta —
+  creó el `ClientInvoice`, sincronizó los dos tabs reales en Google Sheets, y navegó solo a la tab
+  **Facturas** con el filtro de mes ya aplicado mostrando el registro recién creado.
+- **Mobile (375px)**: paso 1, 3 y 4 revisados — stepper scrolleable, botones con buen tamaño de
+  touch target, recap de "Generar" legible y usable.
+- Un bug real mío (`kind` sin usar, detectado por `next lint`) corregido antes de commitear.
+- Encontré (no relacionado a este cambio) un bug preexistente: el DEFAULT SQL de `User.createdAt`
+  generaba un formato que Prisma no podía parsear, rompía el login si se insertaba un `User` por
+  SQL crudo sin setear `createdAt` a mano. **Arreglado** (a pedido explícito del usuario, con su
+  confirmación antes de tocar la Turso real): `scripts/fix-user-createdat-default.ts` recreó la
+  tabla `User` (SQLite no permite `ALTER COLUMN ... SET DEFAULT`) con
+  `DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`. Verificado: los 11 usuarios reales preservados
+  intactos (mismo id/email/createdAt), `PRAGMA foreign_key_check` limpio, y un insert de prueba +
+  lectura vía Prisma confirmó que el bug ya no reproduce.
+
+### QA independiente (`agent-skills:test-engineer`)
+
+Encontró 2 bugs reales, ambos corregidos y reverificados en vivo:
+
+1. **El filtro de mes en "Facturas" no sobrevivía un reload de página** después de "Generar" —
+   `invoicesInitialMonth` era un `useState` local seteado solo por `handleGenerated()`, nunca leído
+   de la URL. Fix: `app/admin/billing/page.tsx` ahora deriva `invoicesInitialMonth` directo de
+   `searchParams.get('month')` en vez de estado local — la URL es la única fuente de verdad, como ya
+   pasa con el resto del wizard. Reverificado: navegación directa a
+   `?tab=invoices&month=2026-09` filtra correctamente de entrada.
+2. **Un `month` inválido en la URL dejaba el wizard colgado en "Cargando..." ~7-8s** — react-query
+   reintentaba 3 veces con backoff antes de mostrar el error 400, que nunca iba a cambiar con un
+   reintento. Fix: `retry: false` en las dos queries del Wizard (`billing-pivot`,
+   `billing-invoice-sheet`), mismo patrón que ya usan otras páginas del proyecto (`mis-horas`,
+   `mi-reporte`, `holidays`). Reverificado: el error aparece en ~1-2s, no ~7-8s.
+
+Confirmado por la QA también: idempotencia de "Generar" (regenerar el mismo mes actualiza en vez de
+duplicar, no crea tabs de Sheets nuevos), y que "Diego Mortenssen" aparece correctamente en pivot y
+facturas con datos reales de setiembre 2026.

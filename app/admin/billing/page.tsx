@@ -1,13 +1,17 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useQuery } from '@tanstack/react-query'
+import { AlertTriangle, Check, ChevronRight } from 'lucide-react'
 import SearchableSelect from '@/components/ui/SearchableSelect'
 import InvoicesTable from '@/components/billing/InvoicesTable'
 import InvoiceBlocksConfig from '@/components/billing/InvoiceBlocksConfig'
+import PivotConfig from '@/components/billing/PivotConfig'
 import { toast } from '@/lib/toast'
 import {
   computeInvoice,
+  getBlockTotals,
   hoursToQty,
   type InvoiceBlockDef,
   type LineState,
@@ -21,20 +25,18 @@ const money = (n: number) =>
   n.toLocaleString('es-UY', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
 
 interface InvoicingRow {
-  label: string
-  resolvedName: string | null
-  exists: boolean
-  hasData: boolean
+  id: number
+  name: string
   total: number
-  hoursByProject: Record<string, number>
+  hasData: boolean
+  hoursByProject: Record<number, number>
 }
 
 interface InvoicingCol {
-  label: string
-  resolvedName: string | null
-  exists: boolean
-  hasData: boolean
+  id: number
+  name: string
   total: number
+  hasData: boolean
 }
 
 interface InvoicingPreview {
@@ -72,39 +74,28 @@ function buildInitialStates(data: InvoiceSheetData): Record<string, LineState> {
   return states
 }
 
-function PivotSection({
-  preview, excluded, onToggle,
-}: {
-  preview: InvoicingPreview
-  excluded: Set<string>
-  onToggle: (label: string) => void
-}) {
-  const warnedItems = [...preview.resources, ...preview.projects].filter((x) => !x.hasData)
+// Paso 2: solo lectura — qué entra en el pivot ya quedó decidido en el paso 1
+// (PivotConfig). Acá solo se revisa que las horas de todos estén cargadas.
+function PivotSection({ preview }: { preview: InvoicingPreview }) {
+  const withoutData = [...preview.resources, ...preview.projects].filter((x) => !x.hasData)
   return (
     <div className="border border-blue-200 rounded-lg p-5 bg-white space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-base font-semibold text-gray-700">Info para invoicing</span>
         <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Hoja 2 · Recurso × Proyecto</span>
       </div>
+      <p className="text-xs text-gray-500">
+        Solo lectura — qué proyectos y personas entran acá se define en el paso &quot;Proyectos y personas&quot;.
+      </p>
 
-      {warnedItems.length > 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 space-y-2">
+      {withoutData.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 space-y-1">
           <div className="flex items-center gap-1 text-yellow-700 font-medium text-sm">
-            <AlertTriangle size={14} /> Avisos — desmarcá lo que no quieras incluir en el archivo
+            <AlertTriangle size={14} /> Sin horas este mes
           </div>
-          <div className="space-y-1 max-h-40 overflow-y-auto">
-            {warnedItems.map((x) => (
-              <label key={x.label} className="flex items-center gap-2 text-xs text-yellow-800">
-                <input
-                  type="checkbox"
-                  checked={x.exists && !excluded.has(x.label)}
-                  onChange={() => onToggle(x.label)}
-                  disabled={!x.exists}
-                />
-                {x.exists
-                  ? `"${x.resolvedName}" no tiene horas cargadas en ${preview.month}`
-                  : `"${x.label}" no existe en la base — no se puede incluir`}
-              </label>
+          <div className="space-y-0.5 max-h-32 overflow-y-auto">
+            {withoutData.map((x) => (
+              <p key={x.id} className="text-xs text-yellow-800">&quot;{x.name}&quot; no tiene horas cargadas en {preview.month}.</p>
             ))}
           </div>
         </div>
@@ -117,25 +108,18 @@ function PivotSection({
               <th className="px-2 py-2 text-left sticky left-0 bg-blue-600">Recurso</th>
               <th className="px-2 py-2 text-right">Total</th>
               {preview.projects.map((p) => (
-                <th
-                  key={p.label}
-                  className={`px-2 py-2 text-right whitespace-nowrap ${excluded.has(p.label) ? 'opacity-40 line-through' : ''}`}
-                >
-                  {p.resolvedName ?? p.label}
-                </th>
+                <th key={p.id} className="px-2 py-2 text-right whitespace-nowrap">{p.name}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {preview.resources.map((r) => (
-              <tr key={r.label} className={`border-t hover:bg-gray-50 ${excluded.has(r.label) ? 'opacity-40' : ''}`}>
-                <td className="px-2 py-1.5 sticky left-0 bg-white font-medium whitespace-nowrap">
-                  {r.exists ? r.resolvedName : `${r.label} (sin match)`}
-                </td>
+              <tr key={r.id} className={`border-t hover:bg-gray-50 ${!r.hasData ? 'opacity-50' : ''}`}>
+                <td className="px-2 py-1.5 sticky left-0 bg-white font-medium whitespace-nowrap">{r.name}</td>
                 <td className="px-2 py-1.5 text-right font-semibold">{formatHours(r.total)}</td>
                 {preview.projects.map((p) => (
-                  <td key={p.label} className="px-2 py-1.5 text-right text-gray-600">
-                    {r.hoursByProject[p.label] > 0 ? formatHours(r.hoursByProject[p.label]) : '—'}
+                  <td key={p.id} className="px-2 py-1.5 text-right text-gray-600">
+                    {r.hoursByProject[p.id] > 0 ? formatHours(r.hoursByProject[p.id]) : '—'}
                   </td>
                 ))}
               </tr>
@@ -148,11 +132,12 @@ function PivotSection({
 }
 
 function InvoiceSection({
-  data, states, setStates,
+  data, states, setStates, onGoToConfig,
 }: {
   data: InvoiceSheetData
   states: Record<string, LineState>
   setStates: (updater: (prev: Record<string, LineState>) => Record<string, LineState>) => void
+  onGoToConfig: () => void
 }) {
   const rows = useMemo(() => computeInvoice(data.blocks, states), [data.blocks, states])
   const blockById = useMemo(() => new Map(data.blocks.map((b) => [b.id, b])), [data.blocks])
@@ -175,9 +160,14 @@ function InvoiceSection({
 
   return (
     <div className="border border-green-200 rounded-lg p-5 bg-white space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="text-base font-semibold text-gray-700">Facturas por cliente</span>
-        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Hoja 1 · Precio × Horas = Total</span>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="text-base font-semibold text-gray-700">Facturas por cliente</span>
+          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Hoja 1 · Precio × Horas = Total</span>
+        </div>
+        <button onClick={onGoToConfig} className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+          ¿Falta una línea o cambió un precio? Ir a Configurar clientes <ChevronRight size={12} />
+        </button>
       </div>
       <p className="text-xs text-gray-500">
         Las horas salen de las horas cargadas de la persona en el proyecto del cliente (enteros). Podés cambiar la persona,
@@ -296,57 +286,26 @@ function InvoiceSection({
   )
 }
 
-function BillingReport() {
-  const now = new Date()
-  const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
-  const [pivot, setPivot] = useState<InvoicingPreview | null>(null)
-  const [excluded, setExcluded] = useState<Set<string>>(new Set())
-  const [invoice, setInvoice] = useState<InvoiceSheetData | null>(null)
-  const [lineStates, setLineStates] = useState<Record<string, LineState>>({})
-  const [loading, setLoading] = useState(false)
+function GenerateSection({
+  data, states, month, onGenerated,
+}: {
+  data: InvoiceSheetData
+  states: Record<string, LineState>
+  month: string
+  onGenerated: (month: string) => void
+}) {
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
-
-  const handlePreview = async () => {
-    setLoading(true); setError(''); setPivot(null); setInvoice(null); setExcluded(new Set())
-    try {
-      const [pivotRes, invoiceRes] = await Promise.all([
-        fetch(`/api/reports/invoicing?month=${month}`),
-        fetch(`/api/reports/invoice-sheet?month=${month}`),
-      ])
-      const pivotData = await pivotRes.json()
-      if (!pivotRes.ok) throw new Error(pivotData.error ?? 'Error al generar la previsualización')
-      const invoiceData = await invoiceRes.json()
-      if (!invoiceRes.ok) throw new Error(invoiceData.error ?? 'Error al generar la hoja de facturas')
-      setPivot(pivotData)
-      setInvoice(invoiceData)
-      setLineStates(buildInitialStates(invoiceData))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const toggleExcluded = (label: string) => {
-    setExcluded((prev) => {
-      const next = new Set(prev)
-      if (next.has(label)) next.delete(label)
-      else next.add(label)
-      return next
-    })
-  }
+  const rows = useMemo(() => computeInvoice(data.blocks, states), [data.blocks, states])
+  const totals = useMemo(() => getBlockTotals(data.blocks, rows).filter((b) => b.total > 0), [data.blocks, rows])
 
   const handleExport = async () => {
-    if (!pivot || !invoice) return
     setExporting(true); setError('')
     try {
-      const includeResources = pivot.resources.filter((r) => r.exists && !excluded.has(r.label)).map((r) => r.label)
-      const includeProjects = pivot.projects.filter((p) => p.exists && !excluded.has(p.label)).map((p) => p.label)
       const res = await fetch('/api/reports/invoicing/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month: pivot.month, includeResources, includeProjects, invoiceLines: lineStates }),
+        body: JSON.stringify({ month, invoiceLines: states }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -358,7 +317,7 @@ function BillingReport() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `invoicing-${pivot.month}.xlsx`
+      a.download = `invoicing-${month}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
       if (summary) {
@@ -378,6 +337,7 @@ function BillingReport() {
         const msg = decodeURIComponent(sheetsSync.slice('error:'.length))
         toast({ title: 'No se pudo sincronizar con Google Sheets', description: msg, variant: 'error' })
       }
+      onGenerated(month)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
     } finally {
@@ -386,56 +346,193 @@ function BillingReport() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="border border-gray-200 rounded-lg p-5 bg-white space-y-3">
-        <p className="text-sm text-gray-500">
-          Genera el archivo mensual para invoicing/contador con dos hojas: las facturas por cliente y el pivot Recurso × Proyecto.
+    <div className="border border-gray-200 rounded-lg p-5 bg-white space-y-4">
+      <div>
+        <span className="text-base font-semibold text-gray-700">Generar — {month}</span>
+        <p className="text-xs text-gray-500 mt-1">
+          Revisá el total por cliente antes de generar. Esto crea o actualiza las facturas del mes, descarga el .xlsx y
+          sincroniza la planilla de Google Sheets.
         </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => { setMonth(e.target.value); setPivot(null); setInvoice(null) }}
-            className="border border-gray-300 rounded px-3 py-1.5 text-sm"
-          />
-          <button
-            onClick={handlePreview}
-            disabled={!month || loading}
-            className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors"
-          >
-            {loading ? 'Generando...' : 'Generar previsualización'}
-          </button>
-        </div>
-        {error && <div className="bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">{error}</div>}
       </div>
 
-      {pivot && invoice && (
-        <>
-          <InvoiceSection data={invoice} states={lineStates} setStates={setLineStates} />
-          <PivotSection preview={pivot} excluded={excluded} onToggle={toggleExcluded} />
+      <div className="border rounded divide-y">
+        {totals.length === 0 && <p className="text-xs text-gray-400 p-3">Ningún cliente tiene total &gt; 0 este mes.</p>}
+        {totals.map((t) => (
+          <div key={t.blockId} className="flex items-center justify-between px-3 py-2 text-sm">
+            <span className="text-gray-700">{t.client}</span>
+            <span className="font-semibold tabular-nums">{money(t.total)}</span>
+          </div>
+        ))}
+        {totals.length > 0 && (
+          <div className="flex items-center justify-between px-3 py-2 text-sm bg-gray-50 font-semibold">
+            <span>Total</span>
+            <span className="tabular-nums">{money(totals.reduce((s, t) => s + t.total, 0))}</span>
+          </div>
+        )}
+      </div>
+
+      {error && <div className="bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">{error}</div>}
+
+      <button
+        onClick={handleExport}
+        disabled={exporting}
+        className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 text-sm flex items-center justify-center gap-2"
+      >
+        <Check size={16} /> {exporting ? 'Generando...' : `Generar facturas de ${month}`}
+      </button>
+    </div>
+  )
+}
+
+const WIZARD_STEPS = [
+  { n: 1, key: 'config', label: 'Proyectos y personas' },
+  { n: 2, key: 'pivot', label: 'Info para invoicing' },
+  { n: 3, key: 'invoice', label: 'Facturas por cliente' },
+  { n: 4, key: 'generate', label: 'Generar' },
+] as const
+
+function WizardStepper({ step, onJump }: { step: number; onJump: (n: number) => void }) {
+  return (
+    <div className="flex items-center gap-1 overflow-x-auto pb-1 -mx-1 px-1">
+      {WIZARD_STEPS.map((s, i) => (
+        <div key={s.n} className="flex items-center gap-1 shrink-0">
           <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 text-sm"
+            onClick={() => onJump(s.n)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-full text-xs sm:text-sm font-medium border transition-colors ${
+              step === s.n ? 'bg-[#0170B9] text-white border-[#0170B9]' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+            }`}
           >
-            {exporting ? 'Generando facturas...' : 'Generar facturas del mes'}
+            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] shrink-0 ${step === s.n ? 'bg-white/20' : 'bg-gray-100'}`}>
+              {s.n}
+            </span>
+            {s.label}
           </button>
-        </>
+          {i < WIZARD_STEPS.length - 1 && <div className="w-4 sm:w-8 h-px bg-gray-300 shrink-0" />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Wizard({ onGenerated }: { onGenerated: (month: string) => void }) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const now = new Date()
+  const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+
+  const step = Math.min(4, Math.max(1, Number(searchParams.get('step') ?? '1') || 1))
+  const month = searchParams.get('month') ?? defaultMonth
+  const [lineStates, setLineStates] = useState<Record<string, LineState>>({})
+
+  const setParams = (patch: Record<string, string>) => {
+    const sp = new URLSearchParams(searchParams.toString())
+    Object.entries(patch).forEach(([k, v]) => sp.set(k, v))
+    router.replace(`/admin/billing?${sp.toString()}`, { scroll: false })
+  }
+
+  const needsData = step >= 2
+  const { data: pivot, isLoading: pivotLoading, error: pivotError } = useQuery<InvoicingPreview>({
+    queryKey: ['billing-pivot', month],
+    queryFn: async () => {
+      const res = await fetch(`/api/reports/invoicing?month=${month}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al cargar el pivot')
+      return data
+    },
+    enabled: needsData,
+    retry: false,
+  })
+  const { data: invoiceSheet, isLoading: invoiceLoading, error: invoiceError } = useQuery<InvoiceSheetData>({
+    queryKey: ['billing-invoice-sheet', month],
+    queryFn: async () => {
+      const res = await fetch(`/api/reports/invoice-sheet?month=${month}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al cargar la hoja de facturas')
+      return data
+    },
+    enabled: needsData,
+    retry: false,
+  })
+
+  useEffect(() => {
+    if (invoiceSheet) setLineStates(buildInitialStates(invoiceSheet))
+  }, [invoiceSheet])
+
+  const loading = pivotLoading || invoiceLoading
+  const loadError = pivotError ?? invoiceError
+
+  return (
+    <div className="space-y-4">
+      <div className="border border-gray-200 rounded-lg p-4 sm:p-5 bg-white space-y-3">
+        <WizardStepper step={step} onJump={(n) => setParams({ step: String(n) })} />
+        {step >= 2 && (
+          <div className="flex items-center gap-3 pt-1">
+            <label className="text-sm text-gray-500">Mes</label>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setParams({ step: String(step), month: e.target.value })}
+              className="border border-gray-300 rounded px-3 py-1.5 text-sm"
+            />
+          </div>
+        )}
+      </div>
+
+      {step === 1 && <PivotConfig />}
+
+      {step >= 2 && loading && <p className="text-sm text-gray-400 py-8 text-center">Cargando...</p>}
+      {step >= 2 && loadError && (
+        <div className="bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">
+          {loadError instanceof Error ? loadError.message : 'Error'}
+        </div>
+      )}
+
+      {step === 2 && pivot && <PivotSection preview={pivot} />}
+
+      {step === 3 && invoiceSheet && (
+        <InvoiceSection
+          data={invoiceSheet}
+          states={lineStates}
+          setStates={setLineStates}
+          onGoToConfig={() => setParams({ tab: 'config' })}
+        />
+      )}
+
+      {step === 4 && invoiceSheet && (
+        <GenerateSection data={invoiceSheet} states={lineStates} month={month} onGenerated={onGenerated} />
       )}
     </div>
   )
 }
 
-type Tab = 'generate' | 'invoices' | 'config'
+type Tab = 'wizard' | 'invoices' | 'config'
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'generate', label: 'Generar' },
-  { key: 'invoices', label: 'Facturas' },
-  { key: 'config', label: 'Configurar clientes' },
-]
+function BillingPageInner() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const activeTab = (searchParams.get('tab') as Tab) ?? 'wizard'
+  // La fuente de verdad es la URL, no un useState local — así el filtro de
+  // mes en "Facturas" sobrevive un reload/link directo, no solo la
+  // navegación SPA justo después de "Generar".
+  const invoicesInitialMonth = searchParams.get('month') ?? undefined
 
-export default function BillingPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('generate')
+  const setTab = (tab: Tab) => {
+    const sp = new URLSearchParams(searchParams.toString())
+    sp.set('tab', tab)
+    router.replace(`/admin/billing?${sp.toString()}`, { scroll: false })
+  }
+
+  const handleGenerated = () => {
+    // El wizard ya deja `month` en la URL (step 4 lo necesita); solo hace
+    // falta cambiar de tab, invoicesInitialMonth se deriva solo arriba.
+    setTab('invoices')
+  }
+
+  const TABS: { key: Tab; label: string }[] = [
+    { key: 'wizard', label: 'Wizard' },
+    { key: 'invoices', label: 'Facturas' },
+    { key: 'config', label: 'Configurar clientes' },
+  ]
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -448,7 +545,7 @@ export default function BillingPage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setActiveTab(t.key)}
+            onClick={() => setTab(t.key)}
             className={`px-3 sm:px-5 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
               activeTab === t.key
                 ? 'border-[#0170B9] text-[#0170B9]'
@@ -460,9 +557,17 @@ export default function BillingPage() {
         ))}
       </div>
 
-      {activeTab === 'generate' && <BillingReport />}
-      {activeTab === 'invoices' && <InvoicesTable />}
+      {activeTab === 'wizard' && <Wizard onGenerated={handleGenerated} />}
+      {activeTab === 'invoices' && <InvoicesTable initialMonth={invoicesInitialMonth} />}
       {activeTab === 'config' && <InvoiceBlocksConfig />}
     </div>
+  )
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense>
+      <BillingPageInner />
+    </Suspense>
   )
 }

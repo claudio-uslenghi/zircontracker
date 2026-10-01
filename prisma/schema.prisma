@@ -17,6 +17,12 @@ model Resource {
   capacityH Int      @default(8)
   createdAt DateTime @default(now())
 
+  // Visibility/order in the "Info para invoicing" pivot (wizard step 1).
+  // null order = not yet positioned by hand, goes last (by name). Replaces
+  // the old hardcoded INVOICING_RESOURCE_ORDER list in lib/invoicing-report.ts.
+  invoicingHidden Boolean @default(false)
+  invoicingOrder  Int?
+
   assignments   Assignment[]
   holidays      Holiday[]
   vacations     Vacation[]
@@ -39,6 +45,11 @@ model Project {
   projectType    String   @default("fixed")
   notes          String   @default("")
   createdAt      DateTime @default(now())
+
+  // Same as Resource.invoicingHidden/invoicingOrder above, for the pivot's
+  // project columns. Replaces INVOICING_PROJECT_ORDER.
+  invoicingHidden Boolean @default(false)
+  invoicingOrder  Int?
 
   assignments   Assignment[]
   timeEntries   TimeEntry[]

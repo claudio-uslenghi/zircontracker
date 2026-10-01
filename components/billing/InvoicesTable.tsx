@@ -125,7 +125,7 @@ function PaymentsPanel({ invoice, onChanged }: { invoice: InvoiceRow; onChanged:
   )
 }
 
-export default function InvoicesTable() {
+export default function InvoicesTable({ initialMonth }: { initialMonth?: string } = {}) {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery<{ rows: InvoiceRow[]; blocks: { blockId: string; client: string }[] }>({
     queryKey: ['client-invoices'],
@@ -134,7 +134,7 @@ export default function InvoicesTable() {
   const rows = useMemo(() => data?.rows ?? [], [data])
   const clientByBlockId = useMemo(() => new Map((data?.blocks ?? []).map((b) => [b.blockId, b.client])), [data])
 
-  const [monthFilter, setMonthFilter] = useState('')
+  const [monthFilter, setMonthFilter] = useState(initialMonth ?? '')
   const [clientFilter, setClientFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [sortBy, setSortBy] = useState<SortCol>('month')
