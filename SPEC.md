@@ -2821,3 +2821,72 @@ Encontró 2 bugs reales, ambos corregidos y reverificados en vivo:
 Confirmado por la QA también: idempotencia de "Generar" (regenerar el mismo mes actualiza en vez de
 duplicar, no crea tabs de Sheets nuevos), y que "Diego Mortenssen" aparece correctamente en pivot y
 facturas con datos reales de setiembre 2026.
+
+---
+
+# Spec: fusionar "Configurar clientes" dentro del paso 1 del wizard
+
+## Objetivo
+
+El usuario notó que el paso 3 ("Facturas por cliente") y la tab "Configurar clientes" usan una
+fuente de datos totalmente aparte del paso 1 ("Proyectos y personas") — confirmado en el código:
+`app/api/reports/invoice-sheet/route.ts` trae **todos** los `Resource`/`Project` sin filtrar por
+`invoicingHidden`, así que alguien oculto en el paso 1 sigue apareciendo seleccionable en el picker
+de personas de "Configurar clientes". Mi lectura: no es un bug — son dos modelos de datos distintos
+a propósito (`invoicingHidden`/`invoicingOrder` en `Project`/`Resource` decide qué entra al *pivot
+de horas*; `InvoiceBlock`/`InvoiceLineDef` es la *estructura de facturación por cliente*, con sus
+propias tarifas/fórmulas, independiente de qué se vea en el pivot) — pero la desconexión entre
+pantallas se siente "hardcodeada" igual.
+
+## Decisiones confirmadas con el usuario
+
+1. **No es solo un ajuste chico** (filtrar el picker, o mostrar un indicador) — el pedido es mover
+   la funcionalidad completa de "Configurar clientes" (bloques/líneas/tarifas) **adentro del paso 1
+   del wizard**.
+2. **"Configurar clientes" sigue existiendo como tab independiente también**, fuera del wizard —
+   mismo criterio que ya se usa con "Facturas": acceso directo para edición suelta, sin tener que
+   entrar por el wizard. No se duplica el modelo de datos ni el componente, se **reutiliza** en los
+   dos lugares.
+3. Encarar ahora, aunque sea un cambio grande.
+
+## No incluido en este alcance (el usuario no lo marcó al elegir)
+
+En la pregunta de alcance (multi-select) el usuario marcó únicamente "mover Configurar clientes al
+paso 1" — explícitamente **no** marcó estas dos, que quedan afuera de esta vuelta:
+
+- Filtrar del picker de personas de "Configurar clientes" a quien esté oculto en el paso 1.
+- Mostrar en el paso 1, junto a cada proyecto, si ya tiene un bloque de facturación asociado.
+
+Quedan anotadas acá por si se quieren retomar más adelante, no se tocan en esta implementación.
+
+## Diseño
+
+- `components/billing/InvoiceBlocksConfig.tsx` no cambia — es el mismo componente, reusado en dos
+  lugares (no se duplica lógica ni se mueve ningún dato de modelo).
+- **Paso 1 del wizard** gana una sub-navegación interna de dos pestañas (mismo lenguaje visual que
+  las tabs de primer nivel, pero anidado): **"Proyectos y personas"** (hoy `PivotConfig`, sin
+  cambios) y **"Clientes de facturación"** (el mismo `InvoiceBlocksConfig` de siempre). Sub-tab por
+  default: "Proyectos y personas". Estado de la sub-tab en la URL (`?step=1&sub=clients`) para que
+  sea consultable/recargable, mismo criterio que el resto del wizard.
+- El label del paso 1 en el stepper pasa de "Proyectos y personas" a **"Configuración"** (ahora
+  cubre las dos cosas) — las otras pestañas del stepper (2, 3, 4) no cambian.
+- La tab de primer nivel **"Configurar clientes"** se mantiene tal cual, apuntando al mismo
+  componente — no se borra ni se renombra.
+- El link que ya existe en el paso 3 ("¿Falta una línea...? Ir a Configurar clientes") pasa a
+  llevar al paso 1 con la sub-tab "Clientes de facturación" seleccionada, en vez de a la tab de
+  primer nivel — más directo ahora que vive ahí también. La tab de primer nivel sigue andando igual
+  para quien entra por ese otro camino.
+
+## Testing strategy
+
+Cambio de UI/routing únicamente (ningún endpoint ni modelo de datos nuevo) — typecheck + build,
+QA en vivo propia (desktop y mobile), y dado que ya hubo una ronda de QA independiente para el
+wizard base, una pasada corta enfocada en lo nuevo (sub-tabs del paso 1, el link del paso 3,
+que "Configurar clientes" como tab de primer nivel siga andando igual) alcanza — no hace falta
+repetir toda la matriz de pruebas del wizard completo.
+
+## Boundaries
+
+- **Never**: tocar el modelo de datos (`InvoiceBlock`/`InvoiceLineDef`/`Project.invoicingHidden`/
+  `Resource.invoicingHidden`) o la lógica de cálculo (`lib/invoice-sheet.ts`) — esto es
+  puramente reorganización de dónde vive la UI existente.
