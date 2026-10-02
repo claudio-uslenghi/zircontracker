@@ -170,7 +170,7 @@ function InvoiceSection({
         </button>
       </div>
       <p className="text-xs text-gray-500">
-        Las horas salen de las horas cargadas de la persona en el proyecto del cliente (enteros). Podés cambiar la persona,
+        Las horas salen de las horas cargadas de la persona en el proyecto del cliente (con decimales). Podés cambiar la persona,
         el precio o la cantidad de cada línea solo para este mes; el archivo lleva las fórmulas de la columna Total.
       </p>
 
@@ -263,9 +263,9 @@ function InvoiceSection({
                       <input
                         type="number"
                         min={0}
-                        step={1}
+                        step="any"
                         value={st?.qty ?? 0}
-                        onChange={(e) => patch(row.itemId!, { qty: Math.round(Number(e.target.value)) || 0 })}
+                        onChange={(e) => patch(row.itemId!, { qty: Number(e.target.value) || 0 })}
                         className="border border-gray-300 rounded px-1.5 py-1 text-xs w-20 text-right"
                       />
                     ) : row.qty != null ? (

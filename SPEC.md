@@ -3021,3 +3021,70 @@ paso 2 ya no aparece en "sin horas", muestra Total 198 con el desglose correcto 
 **Sobre las "filas vacías"**: no reproducido (ver sección de arriba) — no se tocó nada de la lógica
 de blancos entre bloques en esta implementación. Si lo seguís viendo en el tab real, mandame una
 captura fresca para comparar.
+
+---
+
+# Spec: decimales en horas, redondeo de totales, nombre dinámico, celdas vacías
+
+## Objetivo
+
+Cuatro ajustes al wizard/export, investigados y con 3 decisiones confirmadas antes de tocar
+código (ver preguntas hechas):
+
+1. **Paso 3 permite decimales en "Cant."** — en las dos unidades (horas y días), confirmado por
+   el usuario. Hoy forzaba entero (`step={1}`, `Math.round`).
+2. **Redondear totales sin decimales**: solo el **total final de cada cliente** (lo que termina en
+   `ClientInvoice.total`/`billed`) — no cada línea/subtotal/IVA/descuento, que mantienen precisión
+   completa. Confirmado por el usuario.
+3. **Nombre dinámico en el label exportado**: las etiquetas de línea hoy son inconsistentes (
+   algunas ya tienen el nombre escrito a mano de formas distintas — sufijo, paréntesis, o la
+   etiqueta entera es el nombre — otras no tienen nombre). El usuario eligió agregar el nombre
+   SIEMPRE de forma dinámica y limpiar él mismo las etiquetas existentes para que no quede
+   duplicado — no es responsabilidad de esta implementación tocar los datos existentes.
+4. **"Horas por proyecto" en Sheets**: celda vacía en vez de "0" cuando las horas son 0 — mismo
+   criterio que ya usa el pivot en pantalla ("—" en vez de 0).
+
+## Diseño
+
+- `lib/invoice-sheet.ts`:
+  - `hoursToQty()`: ya no redondea a entero, usa `round2()` en las dos unidades.
+  - Input "Cant." en `InvoiceSection` (`app/admin/billing/page.tsx`): `step="any"`, sin
+    `Math.round` en el `onChange`.
+  - `computeInvoice()`: al terminar los items de cada bloque, antes de empujar la fila blanca de
+    separación, se redondea `Math.round()` el `.total` de la **última fila del bloque** (su gran
+    total, mismo criterio que ya usa `getBlockTotals`) y se envuelve su `.totalFormula` en
+    `ROUND(...,0)` — necesario para que el número redondeado sobreviva al recálculo en vivo de la
+    fórmula en Sheets/Excel, no solo el valor cacheado.
+  - `computedRowsToCells()`: para filas `kind==='line'` con `hasPerson && resourceName`, el label
+    exportado (columna B, solo en xlsx/Sheets — el preview en pantalla no cambia, sigue mostrando
+    el label original + la columna "Persona" aparte) pasa a ser `"${label} - ${resourceName}"`.
+- `app/api/reports/invoicing/export/route.ts`: la construcción de `rows` (AOA del pivot, usada
+  tanto en el `.xlsx` como en el sync a Sheets) escribe `''` en vez de `0` para cualquier celda
+  numérica en 0 (por proyecto, Bench, y el total de la persona).
+
+## Testing strategy
+
+Cambio al motor de cálculo central (`computeInvoice`) — typecheck/build, QA propia en vivo con un
+mes ficticio verificando cada uno de los 4 puntos contra la API real de Sheets (no solo el preview
+en pantalla), y dado que toca el core del cálculo, spawneo `agent-skills:test-engineer`
+independiente antes de cerrar, como indica la regla fija del CLAUDE.md.
+
+## Boundaries
+
+- **Never**: limpiar/tocar las etiquetas existentes de `InvoiceLineDef` — el usuario dijo
+  explícitamente que lo hace él.
+- **Never**: redondear nada que no sea la última fila (gran total) de cada bloque.
+
+## Implementado y verificado
+
+QA propia en vivo (mes ficticio, limpiado al terminar) contra la API real de Google Sheets:
+
+- Línea editada a 34.5 horas × $33 → línea sin redondear ($1.138,5), subtotal del bloque sin
+  redondear ($1.138,5), **fila de IVA (gran total) redondeada a $1.389**, con la fórmula real en
+  Sheets confirmada como `=ROUND(E11*1.22,0)` (no solo el valor cacheado).
+- Listado de Facturas mostró Total $1.389, sin decimales.
+- Label exportado de Victor Córdoba confirmado como `"...Power BI Analyst - Victor Córdoba - Victor
+  Cordoba"` — duplicado tal como se esperaba (esa línea todavía no tiene la etiqueta limpiada),
+  confirma que el nombre dinámico se está agregando correctamente.
+- Tab "Horas por proyecto" confirmado con celdas realmente vacías (no "0") para toda persona/
+  proyecto sin horas ese mes ficticio.
