@@ -251,7 +251,7 @@ function InvoiceSection({
                         min={0}
                         step="any"
                         value={st?.rate ?? 0}
-                        onChange={(e) => patch(row.itemId!, { rate: Number(e.target.value) || 0 })}
+                        onChange={(e) => patch(row.itemId!, { rate: Math.max(0, Number(e.target.value) || 0) })}
                         className="border border-gray-300 rounded px-1.5 py-1 text-xs w-20 text-right"
                       />
                     ) : row.kind === 'discount' && row.rate != null ? (
@@ -265,7 +265,7 @@ function InvoiceSection({
                         min={0}
                         step="any"
                         value={st?.qty ?? 0}
-                        onChange={(e) => patch(row.itemId!, { qty: Number(e.target.value) || 0 })}
+                        onChange={(e) => patch(row.itemId!, { qty: Math.max(0, Number(e.target.value) || 0) })}
                         className="border border-gray-300 rounded px-1.5 py-1 text-xs w-20 text-right"
                       />
                     ) : row.qty != null ? (
