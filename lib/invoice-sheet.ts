@@ -84,9 +84,12 @@ export interface ComputedRow {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
-// Whole numbers only (agreed with the user): 167.7 h -> 168; days = h / 8.
+// Decimals allowed in both units (changed from the original whole-numbers-
+// only rule — the real hours data has real decimals, e.g. 34.50, and the
+// admin wants that precision kept instead of rounded away): 167.73 h stays
+// 167.73; days = h / 8, e.g. 180h -> 22.5 days.
 export function hoursToQty(unit: InvoiceUnit, hours: number): number {
-  return unit === 'days' ? Math.round(hours / 8) : Math.round(hours)
+  return unit === 'days' ? round2(hours / 8) : round2(hours)
 }
 
 function sumFormula(col: 'D' | 'E', rowNumbers: number[]): string {
@@ -172,6 +175,19 @@ export function computeInvoice(template: InvoiceBlockDef[], states: Record<strin
         byId.set(item.id, { row: row.sheetRow, total, qty: st.qty })
       }
     }
+
+    // Round only the block's grand total (its last content row — see
+    // getBlockTotals below) to whole dollars, nothing else: every other
+    // line/subtotal/IVA/descuento keeps full precision. Wrap the formula
+    // itself in ROUND() too, not just the cached value — Sheets recomputes
+    // USER_ENTERED formulas live, so a bare cached value would get
+    // overwritten back to the unrounded result otherwise.
+    const lastRow = rows[rows.length - 1]
+    if (lastRow && lastRow.blockId === block.id && lastRow.total != null) {
+      lastRow.total = Math.round(lastRow.total)
+      if (lastRow.totalFormula) lastRow.totalFormula = `ROUND(${lastRow.totalFormula},0)`
+    }
+
     push({ blockId: block.id, kind: 'blank' })
   }
   return rows
@@ -212,7 +228,16 @@ export function computedRowsToCells(rows: ComputedRow[]): XlsxCell[][] {
     } else if (row.kind === 'title' || row.kind === 'text') {
       cells[1] = { v: row.label }
     } else if (row.kind !== 'blank') {
-      if (row.label) cells[1] = { v: row.label }
+      // Nombre de la persona asignada ese mes, agregado dinámicamente al
+      // concepto exportado — nunca desactualizado si la persona cambia mes
+      // a mes, a diferencia de tenerlo escrito a mano en el label fijo del
+      // bloque (ver SPEC.md "nombre en el label").
+      if (row.label) {
+        const withPerson = row.kind === 'line' && row.hasPerson && row.resourceName
+          ? `${row.label} - ${row.resourceName}`
+          : row.label
+        cells[1] = { v: withPerson }
+      }
       if (row.rate !== undefined && row.rate !== null) cells[2] = row.rateFormula ? { v: row.rate, f: row.rateFormula } : { v: row.rate }
       if (row.qty !== undefined && row.qty !== null) cells[3] = row.qtyFormula ? { v: row.qty, f: row.qtyFormula } : { v: row.qty }
       if (row.total !== undefined && row.total !== null) cells[4] = row.totalFormula ? { v: row.total, f: row.totalFormula } : { v: row.total }

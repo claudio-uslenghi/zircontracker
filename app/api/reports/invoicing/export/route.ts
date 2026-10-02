@@ -53,6 +53,10 @@ export async function POST(req: NextRequest) {
   const hoursMap = new Map<string, number>()
   for (const g of grouped) hoursMap.set(`${g.resourceId}|${g.projectId}`, g._sum.hours ?? 0)
 
+  // 0 horas se escribe como celda vacía, no "0" — mismo criterio que ya usa
+  // el pivot en pantalla ("—" en vez de 0), más legible en la hoja real.
+  const blankIfZero = (n: number): string | number => (n === 0 ? '' : Math.round(n * 100) / 100)
+
   const header = ['Recurso', 'Total Horas', ...projects.map((p) => p.name), BENCH_COLUMN_NAME]
   const rows: (string | number)[][] = [header]
 
@@ -74,7 +78,12 @@ export async function POST(req: NextRequest) {
   for (const r of resources) {
     const bench = benchByResource.get(r.id) ?? 0
     const total = Math.round(((visibleTotalByResource.get(r.id) ?? 0) + bench) * 100) / 100
-    rows.push([r.name, total, ...perResourceRowValues.get(r.id)!, bench])
+    rows.push([
+      r.name,
+      blankIfZero(total),
+      ...perResourceRowValues.get(r.id)!.map(blankIfZero),
+      blankIfZero(bench),
+    ])
   }
 
   const XLSX = await import('xlsx')
