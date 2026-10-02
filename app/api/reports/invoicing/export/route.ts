@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sortByEffectiveOrder } from '@/lib/pivot-order'
+import { BENCH_COLUMN_NAME, computeBenchHours } from '@/lib/invoicing-bench'
 import { computeInvoice, computedRowsToCells, getBlockTotals, type LineState } from '@/lib/invoice-sheet'
 import { getInvoiceTemplate } from '@/lib/invoice-template'
 import { lastDayOfMonth } from '@/lib/invoice-records'
@@ -52,9 +53,11 @@ export async function POST(req: NextRequest) {
   const hoursMap = new Map<string, number>()
   for (const g of grouped) hoursMap.set(`${g.resourceId}|${g.projectId}`, g._sum.hours ?? 0)
 
-  const header = ['Recurso', 'Total Horas', ...projects.map((p) => p.name)]
+  const header = ['Recurso', 'Total Horas', ...projects.map((p) => p.name), BENCH_COLUMN_NAME]
   const rows: (string | number)[][] = [header]
 
+  const visibleTotalByResource = new Map<number, number>()
+  const perResourceRowValues = new Map<number, number[]>()
   for (const r of resources) {
     const rowValues: number[] = []
     let total = 0
@@ -63,7 +66,15 @@ export async function POST(req: NextRequest) {
       rowValues.push(Math.round(hours * 100) / 100)
       total += hours
     }
-    rows.push([r.name, Math.round(total * 100) / 100, ...rowValues])
+    visibleTotalByResource.set(r.id, total)
+    perResourceRowValues.set(r.id, rowValues)
+  }
+
+  const benchByResource = await computeBenchHours(resourceIds, visibleTotalByResource, from, to)
+  for (const r of resources) {
+    const bench = benchByResource.get(r.id) ?? 0
+    const total = Math.round(((visibleTotalByResource.get(r.id) ?? 0) + bench) * 100) / 100
+    rows.push([r.name, total, ...perResourceRowValues.get(r.id)!, bench])
   }
 
   const XLSX = await import('xlsx')
@@ -126,7 +137,7 @@ export async function POST(req: NextRequest) {
     // Espejo best-effort en la planilla real de Google Sheets (dos tabs,
     // creados o actualizados). Nunca bloquea la descarga del .xlsx ni la
     // creación de los ClientInvoice de arriba.
-    const sync = await syncInvoicingMonth(month, rows, cells)
+    const sync = await syncInvoicingMonth(month, rows, cells, computedRows)
     sheetsSyncStatus = sync.status === 'error'
       ? `error:${encodeURIComponent((sync.message ?? 'Error desconocido').slice(0, 300))}`
       : sync.status

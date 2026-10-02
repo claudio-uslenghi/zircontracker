@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { sortByEffectiveOrder } from '@/lib/pivot-order'
+import { BENCH_COLUMN_ID, BENCH_COLUMN_NAME, computeBenchHours } from '@/lib/invoicing-bench'
 
 // Preview for the monthly "Info para invoicing" report: Proyecto/Recurso
 // columns & rows come straight from the DB (invoicingHidden: false, ordered
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
   const hoursMap = new Map<string, number>()
   for (const g of grouped) hoursMap.set(`${g.resourceId}|${g.projectId}`, g._sum.hours ?? 0)
 
+  const visibleTotalByResource = new Map<number, number>()
   const resourceRows = resources.map((r) => {
     const hoursByProject: Record<number, number> = {}
     let total = 0
@@ -53,17 +55,30 @@ export async function GET(req: NextRequest) {
       hoursByProject[p.id] = Math.round(hours * 100) / 100
       total += hours
     }
+    visibleTotalByResource.set(r.id, total)
     return { id: r.id, name: r.name, total: Math.round(total * 100) / 100, hasData: total > 0, hoursByProject }
   })
 
-  const projectRows = projects.map((p) => {
-    const total = resourceRows.reduce((sum, r) => sum + (r.hoursByProject[p.id] ?? 0), 0)
-    return { id: p.id, name: p.name, total: Math.round(total * 100) / 100, hasData: total > 0 }
-  })
+  const benchByResource = await computeBenchHours(resourceIds, visibleTotalByResource, from, to)
+  for (const r of resourceRows) {
+    const bench = benchByResource.get(r.id) ?? 0
+    r.hoursByProject[BENCH_COLUMN_ID] = bench
+    r.total = Math.round((r.total + bench) * 100) / 100
+    r.hasData = r.hasData || bench > 0
+  }
+  const benchTotal = resourceRows.reduce((sum, r) => sum + (r.hoursByProject[BENCH_COLUMN_ID] ?? 0), 0)
+
+  const projectRows = [
+    ...projects.map((p) => {
+      const total = resourceRows.reduce((sum, r) => sum + (r.hoursByProject[p.id] ?? 0), 0)
+      return { id: p.id, name: p.name, total: Math.round(total * 100) / 100, hasData: total > 0 }
+    }),
+    { id: BENCH_COLUMN_ID, name: BENCH_COLUMN_NAME, total: Math.round(benchTotal * 100) / 100, hasData: benchTotal > 0 },
+  ]
 
   const warnings: string[] = [
     ...resourceRows.filter((r) => !r.hasData).map((r) => `"${r.name}" no tiene horas cargadas en ${month}.`),
-    ...projectRows.filter((p) => !p.hasData).map((p) => `"${p.name}" no tiene horas cargadas en ${month}.`),
+    ...projectRows.filter((p) => !p.hasData && p.id !== BENCH_COLUMN_ID).map((p) => `"${p.name}" no tiene horas cargadas en ${month}.`),
   ]
 
   return NextResponse.json({ month, resources: resourceRows, projects: projectRows, warnings })

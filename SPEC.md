@@ -2890,3 +2890,134 @@ repetir toda la matriz de pruebas del wizard completo.
 - **Never**: tocar el modelo de datos (`InvoiceBlock`/`InvoiceLineDef`/`Project.invoicingHidden`/
   `Resource.invoicingHidden`) o la lógica de cálculo (`lib/invoice-sheet.ts`) — esto es
   puramente reorganización de dónde vive la UI existente.
+
+---
+
+# Spec: columna "Bench (Internal Issues)", colores de la hoja Invoicing
+
+## Objetivo
+
+Tres reportes del usuario sobre el wizard/sync a Sheets, investigados contra la Turso y la
+planilla reales (vía API, no solo mirando capturas) antes de especificar nada:
+
+### 1. Will Olivera "sin horas" en setiembre — investigado
+
+Tiene 189hs reales en setiembre, las tres contra proyectos hoy ocultos en el paso 1 (`AWS
+Presales`, `Internal Issues`, `AI Assessments`) — por eso el Total del pivot da 0. No es un bug de
+carga, es consecuencia de la curación real que ya está en uso (ver bitácora anterior).
+
+**Decisión del usuario**: no es "mostrar todo oculto" ni "sumar igual aunque esté oculto" en
+general — es más específico:
+- **"AI Assessments"** pasa a ser una columna visible real de nuevo (se destapa en el paso 1).
+- **Nueva columna sintética "Bench (Internal Issues)"**: acumula, por persona, las horas de
+  **todos los demás** proyectos ocultos (Internal Issues + cualquier otro proyecto interno no
+  facturable) — no es un Proyecto real de la base, es un total calculado.
+- Las dos van a la hoja **"Horas por proyecto"** (pivot, paso 2 del wizard y el tab de Sheets) —
+  **nunca** a la hoja "Invoicing"/"Facturas por cliente" (que sigue viniendo de `InvoiceBlock`,
+  sin cambios, ya estaba desacoplada de esto).
+
+### 2. Colores de la hoja "Invoicing" al generar/actualizar
+
+Confirmado: el tab real de setiembre tiene los colores hoy porque alguien duplicó a mano un tab
+viejo antes de correr "Generar" — nuestro sync solo escribe valores (`values.clear`/
+`values.update`), nunca toca formato, así que sobrevivió por casualidad. Si el mes no tiene un tab
+pre-duplicado, `ensureTab` crea uno en blanco sin ningún color.
+
+Colores reales extraídos por API del tab histórico "Invoicing August 2026" (no adivinados de la
+captura):
+
+| Elemento | Color | Nota |
+|---|---|---|
+| Fila título superior (solo la primera, "AGREGAR NUEVOS COMENTARIOS...") | `#FF9900` naranja | negrita, columnas B:E |
+| "OK" (col A) de cada header de cliente | `#00FF00` verde | |
+| Nombre del cliente (col B) de cada header | `#EA4335` rojo | negrita |
+| "Precio"/"Horas" (col C:D) de cada header | `#00FF00` verde | |
+| "Total" (col E) de cada header | `#FFFF00` amarillo | |
+
+**Decisión**: aplicar este formato **siempre** que se genera/actualiza un mes (no solo al crear el
+tab por primera vez) — así no depende de que alguien lo haya duplicado a mano antes.
+
+### 3. "Varias filas vacías" entre proyectos — no reproducido
+
+Revisé el tab real de setiembre dos veces (valores por celda vía API, y `rowGroups` del sheet por
+si había una agrupación de filas colapsada heredada de un duplicado viejo) — en ambos casos da 1
+sola fila vacía entre cada bloque activo, sin agrupaciones colgadas (`rowGroups: []`). El usuario
+confirmó que miraba justamente ese tab. Como no lo pude reproducir con evidencia directa de la API,
+**queda sin tocar en esta vuelta** — si lo seguís viendo, mandame una captura fresca de ese mismo
+tab para comparar línea por línea contra lo que la API reporta.
+
+## Diseño
+
+### Columna Bench (Internal Issues)
+
+- `app/api/reports/invoicing/route.ts` (pivot, paso 2) y `.../export/route.ts` (export + sync a
+  Sheets): además del `groupBy` ya existente (horas por recurso×proyecto, solo proyectos
+  visibles), un segundo `groupBy` por `resourceId` solo (sin filtrar por proyecto) da el total real
+  de cada persona ese mes. `bench = totalReal - sum(columnas visibles)` — matemáticamente
+  equivalente a sumar todos los proyectos ocultos, sin necesidad de enumerarlos.
+- Se agrega como una columna más al array `projects`, con un id sentinel (`-1`, nunca choca con un
+  id real de `Project`) y `name: 'Bench (Internal Issues)'`, al final de las columnas reales.
+  `hoursByProject[-1]` lleva el valor de bench por persona.
+- Aparece en el pivot en pantalla (paso 2) y en la hoja "Horas por proyecto" (tanto el `.xlsx` como
+  el tab de Sheets) — no se toca nada de la hoja "Facturas"/"Invoicing" (ya es un camino de datos
+  aparte, `InvoiceBlock`/`InvoiceLineDef`).
+- "AI Assessments" se destapa en el paso 1 (una sola actualización de dato, usando el mecanismo que
+  ya existe — no hace falta código nuevo para esto en particular).
+
+### Colores de la hoja Invoicing
+
+- `lib/google-sheets.ts`: `syncInvoicingMonth` pasa a recibir también `computedRows` (no solo
+  `invoiceCells`, que ya perdió el `kind` de cada fila) para saber qué filas son headers/título.
+- Antes de aplicar colores, un `repeatCell` limpia todo el formato del rango escrito (para no dejar
+  colores de un mes anterior con más/menos bloques pisados por error). Después, un `batchUpdate`
+  con un `repeatCell` por celda/rango coloreado (tabla de arriba), identificando cada fila por
+  `row.kind === 'header'` y la primera fila `kind === 'title'` del array completo.
+- `ensureTab` pasa a devolver el `sheetId` numérico (lo necesita el `batchUpdate` de formato).
+
+## Testing strategy
+
+Cambio grande en el camino de datos del pivot + nueva lógica de formato vía Sheets API — typecheck/
+build, y QA en vivo con un mes ficticio (igual que las veces anteriores) verificando con la API real
+de Sheets que: Bench aparece con el valor correcto, AI Assessments quedó visible, los colores se
+aplican tal cual la tabla de arriba, y que la hoja Invoicing no cambió en nada. Limpieza de
+fixtures al terminar.
+
+## Boundaries
+
+- **Never**: tocar `InvoiceBlock`/`InvoiceLineDef` ni la hoja "Invoicing"/"Facturas por cliente" —
+  Bench y AI Assessments son estrictamente del lado del pivot de horas.
+- **Ask first**: ninguna acción nueva que lo amerite — destapar "AI Assessments" es reversible
+  (un click en "Mostrar" del paso 1 si hace falta revertirlo).
+
+## Implementado
+
+- `lib/invoicing-bench.ts` (nuevo): `computeBenchHours()` — `bench = total real del mes - horas ya
+  contadas en columnas visibles`, por recurso. `app/api/reports/invoicing/route.ts` (pivot) y
+  `.../export/route.ts` (xlsx + sync a Sheets) agregan la columna sintética `Bench (Internal
+  Issues)` al final de las columnas reales, con id sentinel `-1`.
+- `lib/google-sheets.ts`: `ensureTab` ahora devuelve el `sheetId` numérico; `syncInvoicingMonth`
+  recibe también `computedRows` y arma un `batchUpdate` de formato (limpia todo el rango primero,
+  después colorea cada fila `header`/la primera fila `title`) con los colores reales extraídos por
+  API del tab histórico "Invoicing August 2026" — se aplica en cada sync, no solo al crear el tab.
+- "AI Assessments" ya estaba destapado en producción al momento de implementar esto (lo hizo el
+  propio usuario curando el paso 1 mientras tanto) — confirmado, no hizo falta tocarlo.
+
+### Verificación
+
+`npx tsc --noEmit`, `npm run lint`, `npm run build`: limpios.
+
+**Contra la API real de Google Sheets**, con un mes ficticio (`2031-03`, sin datos reales, limpiado
+al terminar): el `batchUpdate` de formato produjo exactamente los mismos colores que el tab
+histórico de referencia (título naranja negrita B:E, header OK/Precio/Horas verde, cliente rojo
+negrita, Total amarillo) — comparado campo a campo contra lo leído del tab real "Invoicing August
+2026". La columna `Bench (Internal Issues)` apareció correctamente en el header del tab "Horas por
+proyecto".
+
+**El cálculo real** (setiembre 2026, solo lectura, sin generar nada) confirmó Will Olivera con
+visible=88 (AI Assessments) + bench=110 (Internal Issues/AWS Presales) = 198 total — **reverificado
+también en la UI real** (browser, usuario admin descartable, borrado al terminar): su fila en el
+paso 2 ya no aparece en "sin horas", muestra Total 198 con el desglose correcto por columna.
+
+**Sobre las "filas vacías"**: no reproducido (ver sección de arriba) — no se tocó nada de la lógica
+de blancos entre bloques en esta implementación. Si lo seguís viendo en el tab real, mandame una
+captura fresca para comparar.
