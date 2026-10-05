@@ -2,7 +2,9 @@ import { getToken } from 'next-auth/jwt'
 import { NextRequest, NextResponse } from 'next/server'
 
 // /api/cron has no user session (Vercel Cron); its handler checks CRON_SECRET itself.
-const PUBLIC_PATHS = ['/login', '/api/auth', '/unauthorized', '/api/cron']
+// /api/holidays-bot/image has no session either — Slack's servers fetch it
+// directly (image_url en el Incoming Webhook), sin cookies.
+const PUBLIC_PATHS = ['/login', '/api/auth', '/unauthorized', '/api/cron', '/api/holidays-bot/image']
 
 // Accessible to any authenticated user regardless of their PagePermission
 // matrix — e.g. changing your own password isn't a "page" you're granted.

@@ -6,11 +6,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
 import { format } from 'date-fns'
 import { formatDate, countWorkingDays } from '@/lib/date-utils'
-import { Plus, Trash2, Upload, Download, Filter, Pencil, Search, RefreshCw, List, CalendarDays, BarChart3 } from 'lucide-react'
+import { Plus, Trash2, Upload, Download, Filter, Pencil, Search, RefreshCw, List, CalendarDays, BarChart3, Send } from 'lucide-react'
 import HolidayModal from '@/components/modals/HolidayModal'
 import VacationModal from '@/components/modals/VacationModal'
 import VacationCsvImportModal from '@/components/modals/VacationCsvImportModal'
 import VacationSyncModal from '@/components/modals/VacationSyncModal'
+import HolidaysBotModal from '@/components/modals/HolidaysBotModal'
 import HolidaysCalendar from '@/components/holidays/HolidaysCalendar'
 import VacationTotals from '@/components/holidays/VacationTotals'
 import CsvImportModal from '@/components/modals/CsvImportModal'
@@ -45,6 +46,7 @@ function HolidaysPageInner() {
   const [showVacationCsvModal, setShowVacationCsvModal] = useState(false)
   const [showCsvModal, setShowCsvModal] = useState(false)
   const [showSyncModal, setShowSyncModal] = useState(false)
+  const [showHolidaysBotModal, setShowHolidaysBotModal] = useState(false)
 
   // view/país/búsqueda reflejados en la URL (deep-linkable, sobreviven un
   // reload) — view y país son clicks/selects, se escriben directo a la URL;
@@ -87,6 +89,12 @@ function HolidaysPageInner() {
   const { data: lastSync } = useQuery<SyncRunSummary | null>({
     queryKey: ['vacation-sync-last'],
     queryFn: () => fetch('/api/vacations/sync').then((r) => (r.ok ? r.json() : null)),
+    enabled: isAdmin,
+  })
+
+  const { data: lastHolidaysBotRun } = useQuery<SyncRunSummary | null>({
+    queryKey: ['holidays-bot-last'],
+    queryFn: () => fetch('/api/holidays-bot/send').then((r) => (r.ok ? r.json() : null)),
     enabled: isAdmin,
   })
 
@@ -198,6 +206,14 @@ function HolidaysPageInner() {
               <RefreshCw size={14} /> Sincronizar con Google Sheet
             </button>
           )}
+          {isAdmin && (
+            <button
+              onClick={() => setShowHolidaysBotModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm min-h-[40px]"
+            >
+              <Send size={14} /> Holidays Bot
+            </button>
+          )}
         </div>
       </div>
       {isAdmin && lastSync && (
@@ -205,6 +221,14 @@ function HolidaysPageInner() {
           Última sincronización: {lastSyncFormatter.format(new Date(lastSync.ranAt))} ({lastSync.trigger === 'cron' ? 'automática' : 'manual'})
           {lastSync.ok
             ? ` · ${lastSync.created} creadas, ${lastSync.updated} actualizadas, ${lastSync.deleted} borradas${lastSync.unmatchedCount ? `, ${lastSync.unmatchedCount} mail(s) sin match` : ''}`
+            : ' · falló'}
+        </p>
+      )}
+      {isAdmin && lastHolidaysBotRun && (
+        <p className={`text-xs ${lastHolidaysBotRun.ok ? 'text-gray-500' : 'text-red-600'}`}>
+          Último envío a Slack (Holidays Bot): {lastSyncFormatter.format(new Date(lastHolidaysBotRun.ranAt))} ({lastHolidaysBotRun.trigger === 'cron' ? 'automático' : 'manual'})
+          {lastHolidaysBotRun.ok
+            ? ` · ${lastHolidaysBotRun.created} país(es), ${lastHolidaysBotRun.updated} feriado(s)`
             : ' · falló'}
         </p>
       )}
@@ -443,6 +467,7 @@ function HolidaysPageInner() {
       />
       {isAdmin && <VacationCsvImportModal open={showVacationCsvModal} onClose={() => setShowVacationCsvModal(false)} />}
       {isAdmin && <VacationSyncModal open={showSyncModal} onClose={() => setShowSyncModal(false)} />}
+      {isAdmin && <HolidaysBotModal open={showHolidaysBotModal} onClose={() => setShowHolidaysBotModal(false)} />}
       {isAdmin && <CsvImportModal open={showCsvModal} onClose={() => setShowCsvModal(false)} />}
     </div>
   )
