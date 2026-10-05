@@ -1,6 +1,7 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, Suspense, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
 import { format } from 'date-fns'
@@ -28,7 +29,13 @@ function calcWorkingDays(start: string, end: string) {
   return countWorkingDays(start, end)
 }
 
-export default function HolidaysPage() {
+const lastSyncFormatter = new Intl.DateTimeFormat('es', {
+  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+})
+
+function HolidaysPageInner() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const qc = useQueryClient()
   const { data: session } = useSession()
   const isAdmin = ((session?.user as { roles?: string[] })?.roles ?? []).includes('admin')
@@ -37,11 +44,24 @@ export default function HolidaysPage() {
   const [showVacationModal, setShowVacationModal] = useState(false)
   const [showVacationCsvModal, setShowVacationCsvModal] = useState(false)
   const [showCsvModal, setShowCsvModal] = useState(false)
-  const [filterCountry, setFilterCountry] = useState<string>('')
-  const [view, setView] = useState<'list' | 'calendar' | 'totals'>('calendar')
   const [showSyncModal, setShowSyncModal] = useState(false)
 
-  const [vacationSearch, setVacationSearch] = useState('')
+  // view/país/búsqueda reflejados en la URL (deep-linkable, sobreviven un
+  // reload) — view y país son clicks/selects, se escriben directo a la URL;
+  // la búsqueda de texto usa estado local (responsive al tipear) + se
+  // empuja a la URL como efecto, mismo criterio que /projects.
+  const setParams = (patch: Record<string, string>) => {
+    const sp = new URLSearchParams(searchParams.toString())
+    Object.entries(patch).forEach(([k, v]) => (v ? sp.set(k, v) : sp.delete(k)))
+    router.replace(`/holidays?${sp.toString()}`, { scroll: false })
+  }
+  const view = (searchParams.get('view') as 'list' | 'calendar' | 'totals') ?? 'calendar'
+  const setView = (v: 'list' | 'calendar' | 'totals') => setParams({ view: v })
+  const filterCountry = searchParams.get('country') ?? ''
+  const setFilterCountry = (country: string) => setParams({ country })
+  const [vacationSearch, setVacationSearchState] = useState(searchParams.get('q') ?? '')
+  const setVacationSearch = (q: string) => { setVacationSearchState(q); setParams({ q }) }
+
   const [vacationPage, setVacationPage] = useState(1)
   const [vacationPageSize, setVacationPageSize] = useState(10)
 
@@ -87,8 +107,13 @@ export default function HolidaysPage() {
     qc.invalidateQueries({ queryKey: ['gantt'] })
   }
 
-  const deleteVacation = async (id: number) => {
-    await fetch(`/api/vacations/${id}`, { method: 'DELETE' })
+  const deleteVacation = async (v: Vacation) => {
+    const ok = await confirmDialog({
+      title: `¿Eliminar esta vacación de ${v.resource?.name ?? 'este recurso'}?`,
+      description: `${formatDate(v.startDate)} – ${formatDate(v.endDate)}. Esta acción no se puede deshacer.`,
+    })
+    if (!ok) return
+    await fetch(`/api/vacations/${v.id}`, { method: 'DELETE' })
     qc.invalidateQueries({ queryKey: ['vacations'] })
     qc.invalidateQueries({ queryKey: ['gantt'] })
   }
@@ -177,7 +202,7 @@ export default function HolidaysPage() {
       </div>
       {isAdmin && lastSync && (
         <p className={`text-xs ${lastSync.ok ? 'text-gray-500' : 'text-red-600'}`}>
-          Última sincronización: {format(new Date(lastSync.ranAt), 'dd/MM/yyyy HH:mm')} ({lastSync.trigger === 'cron' ? 'automática' : 'manual'})
+          Última sincronización: {lastSyncFormatter.format(new Date(lastSync.ranAt))} ({lastSync.trigger === 'cron' ? 'automática' : 'manual'})
           {lastSync.ok
             ? ` · ${lastSync.created} creadas, ${lastSync.updated} actualizadas, ${lastSync.deleted} borradas${lastSync.unmatchedCount ? `, ${lastSync.unmatchedCount} mail(s) sin match` : ''}`
             : ' · falló'}
@@ -202,6 +227,8 @@ export default function HolidaysPage() {
               <Search size={13} className="text-gray-400" />
               <input
                 type="text"
+                name="vacation-search"
+                autoComplete="off"
                 value={vacationSearch}
                 onChange={(e) => { setVacationSearch(e.target.value); setVacationPage(1) }}
                 placeholder="Buscar por nombre o email..."
@@ -249,10 +276,10 @@ export default function HolidaysPage() {
                 </tr>
               ) : pagedVacations.map((v) => (
                 <tr key={v.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: v.resource?.color ?? '#ccc' }} />
-                      <span className="font-medium">{v.resource?.name ?? '—'}</span>
+                  <td className="px-4 py-3 max-w-[200px]">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: v.resource?.color ?? '#ccc' }} />
+                      <span className="font-medium truncate">{v.resource?.name ?? '—'}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-gray-500">{countryLabel(v.resource?.country ?? 'Otro')}</td>
@@ -263,7 +290,11 @@ export default function HolidaysPage() {
                   <td className="px-4 py-3 text-gray-500">{v.notes || '—'}</td>
                   <td className="px-4 py-3 text-center">
                     {(isAdmin || myResource?.id === v.resourceId) && (
-                      <button onClick={() => deleteVacation(v.id)} className="text-red-400 hover:text-red-600">
+                      <button
+                        onClick={() => deleteVacation(v)}
+                        aria-label={`Eliminar vacación de ${v.resource?.name ?? 'este recurso'}`}
+                        className="text-red-400 hover:text-red-600"
+                      >
                         <Trash2 size={14} />
                       </button>
                     )}
@@ -363,6 +394,7 @@ export default function HolidaysPage() {
                               <button
                                 onClick={() => { setEditHoliday(h); setShowHolidayModal(true) }}
                                 className="text-blue-400 hover:text-blue-600 transition-colors"
+                                aria-label={`Editar ${h.name}`}
                                 title="Editar"
                               >
                                 <Pencil size={14} />
@@ -370,6 +402,7 @@ export default function HolidaysPage() {
                               <button
                                 onClick={() => deleteCountryHoliday(h.id)}
                                 className="text-red-400 hover:text-red-600 transition-colors"
+                                aria-label={`Eliminar ${h.name}`}
                                 title="Eliminar"
                               >
                                 <Trash2 size={14} />
@@ -412,5 +445,13 @@ export default function HolidaysPage() {
       {isAdmin && <VacationSyncModal open={showSyncModal} onClose={() => setShowSyncModal(false)} />}
       {isAdmin && <CsvImportModal open={showCsvModal} onClose={() => setShowCsvModal(false)} />}
     </div>
+  )
+}
+
+export default function HolidaysPage() {
+  return (
+    <Suspense>
+      <HolidaysPageInner />
+    </Suspense>
   )
 }

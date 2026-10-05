@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Suspense, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Clock, TrendingUp, FolderKanban, CalendarDays } from 'lucide-react'
@@ -53,17 +54,30 @@ async function fetchMeJson(url: string) {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-export default function MiReportePage() {
+function MiReportePageInner() {
   const isMobile = useIsMobile()
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const today = new Date()
   const y = today.getFullYear()
   const m = String(today.getMonth() + 1).padStart(2, '0')
   const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+  const defaultDateFrom = `${y}-${m}-01`
+  const defaultDateTo = `${y}-${m}-${String(lastDay).padStart(2, '0')}`
 
-  const [projectId, setProjectId] = useState('')
-  const [taskId, setTaskId] = useState('')
-  const [dateFrom, setDateFrom] = useState(`${y}-${m}-01`)
-  const [dateTo, setDateTo] = useState(`${y}-${m}-${String(lastDay).padStart(2, '0')}`)
+  const setParams = (patch: Record<string, string>) => {
+    const sp = new URLSearchParams(searchParams.toString())
+    Object.entries(patch).forEach(([k, v]) => (v ? sp.set(k, v) : sp.delete(k)))
+    router.replace(`/mi-reporte?${sp.toString()}`, { scroll: false })
+  }
+
+  const projectId = searchParams.get('projectId') ?? ''
+  const taskId = searchParams.get('taskId') ?? ''
+  const setTaskId = (v: string) => setParams({ taskId: v })
+  const dateFrom = searchParams.get('dateFrom') ?? defaultDateFrom
+  const setDateFrom = (v: string) => setParams({ dateFrom: v })
+  const dateTo = searchParams.get('dateTo') ?? defaultDateTo
+  const setDateTo = (v: string) => setParams({ dateTo: v })
 
   const { data: projects } = useQuery<Project[]>({
     queryKey: ['projects'],
@@ -87,8 +101,8 @@ export default function MiReportePage() {
   )
 
   function handleProjectChange(value: string) {
-    setProjectId(value)
-    setTaskId('') // a task from the previous project wouldn't be valid here
+    // a task from the previous project wouldn't be valid here
+    setParams({ projectId: value, taskId: '' })
   }
 
   const params = new URLSearchParams({
@@ -175,10 +189,7 @@ export default function MiReportePage() {
   })
 
   const resetFilters = () => {
-    setProjectId('')
-    setTaskId('')
-    setDateFrom(`${y}-${m}-01`)
-    setDateTo(`${y}-${m}-${String(lastDay).padStart(2, '0')}`)
+    setParams({ projectId: '', taskId: '', dateFrom: defaultDateFrom, dateTo: defaultDateTo })
   }
 
   // "Este mes" / "Mes anterior" — quick alternative to typing Desde/Hasta by
@@ -188,8 +199,7 @@ export default function MiReportePage() {
     const ty = target.getFullYear()
     const tm = String(target.getMonth() + 1).padStart(2, '0')
     const tLastDay = new Date(ty, target.getMonth() + 1, 0).getDate()
-    setDateFrom(`${ty}-${tm}-01`)
-    setDateTo(`${ty}-${tm}-${String(tLastDay).padStart(2, '0')}`)
+    setParams({ dateFrom: `${ty}-${tm}-01`, dateTo: `${ty}-${tm}-${String(tLastDay).padStart(2, '0')}` })
   }
 
   return (
@@ -365,14 +375,16 @@ export default function MiReportePage() {
                   backgroundColor: 'white',
                   borderRight: '2px solid #d1d5db', borderBottom: '1px solid #e5e7eb',
                   padding: '5px 10px', fontSize: 12,
-                  width: NAME_W, minWidth: NAME_W,
+                  width: NAME_W, minWidth: NAME_W, maxWidth: NAME_W,
                 }}>
-                  <span style={{
-                    display: 'inline-block', width: 8, height: 8,
-                    borderRadius: '50%', backgroundColor: proj.projectColor,
-                    marginRight: 6, verticalAlign: 'middle',
-                  }} />
-                  {proj.projectName}
+                  <div className="flex items-center min-w-0">
+                    <span style={{
+                      display: 'inline-block', width: 8, height: 8,
+                      borderRadius: '50%', backgroundColor: proj.projectColor,
+                      marginRight: 6, flexShrink: 0,
+                    }} />
+                    <span className="truncate">{proj.projectName}</span>
+                  </div>
                 </td>
                 {days.map((day) => {
                   const reg = proj.dailyHours[day]
@@ -501,5 +513,13 @@ export default function MiReportePage() {
       </>
       )}
     </div>
+  )
+}
+
+export default function MiReportePage() {
+  return (
+    <Suspense>
+      <MiReportePageInner />
+    </Suspense>
   )
 }

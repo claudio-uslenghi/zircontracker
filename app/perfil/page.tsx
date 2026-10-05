@@ -58,6 +58,7 @@ export default function PerfilPage() {
             <label className="block text-sm font-medium mb-1">Contraseña actual</label>
             <input
               type="password"
+              autoComplete="current-password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
@@ -68,6 +69,7 @@ export default function PerfilPage() {
             <label className="block text-sm font-medium mb-1">Contraseña nueva</label>
             <input
               type="password"
+              autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
@@ -79,6 +81,7 @@ export default function PerfilPage() {
             <label className="block text-sm font-medium mb-1">Confirmar contraseña nueva</label>
             <input
               type="password"
+              autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
@@ -86,7 +89,7 @@ export default function PerfilPage() {
               required
             />
           </div>
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {error && <p className="text-red-500 text-sm" aria-live="polite">{error}</p>}
           <button
             type="submit"
             disabled={submitting}
