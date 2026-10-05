@@ -3,8 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
 import { Users, FolderKanban, CalendarDays } from 'lucide-react'
-import { format, parseISO } from 'date-fns'
-import { es } from 'date-fns/locale'
+import { parseISO } from 'date-fns'
 import StatCard from '@/components/ui/StatCard'
 import EmptyState from '@/components/ui/EmptyState'
 import { SkeletonCard, SkeletonRow } from '@/components/ui/Skeleton'
@@ -14,6 +13,8 @@ type DashboardSummary = {
   projectCount: number
   upcomingHolidays: { id: number; country: string; date: string; name: string }[]
 }
+
+const holidayDateFormatter = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'long' })
 
 export default function DashboardPage() {
   const { data: session } = useSession()
@@ -61,11 +62,11 @@ export default function DashboardPage() {
         ) : (
           <ul className="divide-y divide-gray-100">
             {data.upcomingHolidays.map((h) => (
-              <li key={h.id} className="flex items-center justify-between py-2 text-sm">
-                <span className="text-gray-700">{h.name}</span>
-                <span className="text-gray-400 flex items-center gap-2">
+              <li key={h.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                <span className="text-gray-700 min-w-0 truncate">{h.name}</span>
+                <span className="text-gray-400 flex items-center gap-2 shrink-0">
                   <span className="text-xs bg-gray-100 rounded-full px-2 py-0.5">{h.country}</span>
-                  {format(parseISO(h.date), "d 'de' MMMM", { locale: es })}
+                  {holidayDateFormatter.format(parseISO(h.date))}
                 </span>
               </li>
             ))}

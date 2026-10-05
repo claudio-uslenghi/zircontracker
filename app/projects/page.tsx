@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { Suspense, useState, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
 import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, Search, X } from 'lucide-react'
@@ -8,6 +9,8 @@ import ProjectModal from '@/components/modals/ProjectModal'
 import { formatDate } from '@/lib/date-utils'
 import { confirmDialog } from '@/lib/confirm-dialog'
 import type { Project } from '@/types'
+
+const currencyFormatter = new Intl.NumberFormat('es-UY', { maximumFractionDigits: 2 })
 
 const STATUS_COLORS: Record<string, string> = {
   'En ejecución':    '#C6EFCE',
@@ -37,16 +40,31 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
     : <ChevronDown size={13} className="ml-1 inline" />
 }
 
-export default function ProjectsPage() {
+function ProjectsPageInner() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const qc = useQueryClient()
   const { data: session } = useSession()
   const isAdmin = ((session?.user as { roles?: string[] })?.roles ?? []).includes('admin')
   const [showModal, setShowModal]     = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
-  const [sortKey, setSortKey]           = useState<SortKey>('name')
-  const [sortDir, setSortDir]           = useState<SortDir>('asc')
-  const [statusFilter, setStatusFilter] = useState<string>('active')
-  const [nameFilter, setNameFilter]     = useState('')
+
+  // Filtros/orden reflejados en la URL (deep-linkable, sobreviven un
+  // reload) — sortKey/sortDir/statusFilter son clicks, se escriben directo;
+  // nameFilter es texto libre, se guarda en estado local para que tipear no
+  // dependa del round-trip del router, y se empuja a la URL como efecto.
+  const sortKey = (searchParams.get('sort') as SortKey) ?? 'name'
+  const sortDir = (searchParams.get('dir') as SortDir) ?? 'asc'
+  const statusFilter = searchParams.get('status') ?? 'active'
+  const [nameFilter, setNameFilterState] = useState(searchParams.get('q') ?? '')
+
+  const setParams = (patch: Record<string, string>) => {
+    const sp = new URLSearchParams(searchParams.toString())
+    Object.entries(patch).forEach(([k, v]) => (v ? sp.set(k, v) : sp.delete(k)))
+    router.replace(`/projects?${sp.toString()}`, { scroll: false })
+  }
+  const setStatusFilter = (status: string) => setParams({ status })
+  const setNameFilter = (q: string) => { setNameFilterState(q); setParams({ q }) }
 
   const { data: projects = [], isLoading } = useQuery<Project[]>({
     queryKey: ['projects'],
@@ -65,8 +83,8 @@ export default function ProjectsPage() {
   }
 
   const handleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setSortKey(key); setSortDir('asc') }
+    if (sortKey === key) setParams({ dir: sortDir === 'asc' ? 'desc' : 'asc' })
+    else setParams({ sort: key, dir: 'asc' })
   }
 
   const filtered = useMemo(() => {
@@ -104,11 +122,16 @@ export default function ProjectsPage() {
   const totalCost  = filtered.reduce((s, p) => s + p.estimatedHours * p.costPerHour, 0)
 
   const Th = ({ col, label, className = '' }: { col: SortKey; label: string; className?: string }) => (
-    <th
-      className={`px-4 py-3 cursor-pointer select-none whitespace-nowrap hover:bg-[#005a94] transition-colors ${className}`}
-      onClick={() => handleSort(col)}
-    >
-      {label}<SortIcon col={col} sortKey={sortKey} sortDir={sortDir} />
+    <th className={`p-0 whitespace-nowrap ${className}`}>
+      <button
+        type="button"
+        onClick={() => handleSort(col)}
+        className={`w-full h-full px-4 py-3 select-none hover:bg-[#005a94] focus-visible:bg-[#005a94] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:-outline-offset-2 transition-colors ${
+          className.includes('text-right') ? 'text-right' : 'text-left'
+        }`}
+      >
+        {label}<SortIcon col={col} sortKey={sortKey} sortDir={sortDir} />
+      </button>
     </th>
   )
 
@@ -140,13 +163,15 @@ export default function ProjectsPage() {
           <Search size={14} className="absolute left-2.5 text-gray-400 pointer-events-none" />
           <input
             type="text"
+            name="project-search"
+            autoComplete="off"
             placeholder="Buscar proyecto..."
             value={nameFilter}
             onChange={e => setNameFilter(e.target.value)}
             className="pl-8 pr-7 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-[#0170B9] w-52"
           />
           {nameFilter && (
-            <button onClick={() => setNameFilter('')} className="absolute right-2 text-gray-400 hover:text-gray-600">
+            <button onClick={() => setNameFilter('')} aria-label="Limpiar búsqueda" className="absolute right-2 text-gray-400 hover:text-gray-600">
               <X size={13} />
             </button>
           )}
@@ -222,10 +247,10 @@ export default function ProjectsPage() {
                   </tr>
                 ) : filtered.map((p) => (
                   <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
+                    <td className="px-4 py-3 max-w-[240px]">
+                      <div className="flex items-center gap-2 min-w-0">
                         <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
-                        <span className="font-medium">{p.name}</span>
+                        <span className="font-medium truncate">{p.name}</span>
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -245,10 +270,10 @@ export default function ProjectsPage() {
                     <td className="px-4 py-3 text-gray-600">{formatDate(p.endDate)}</td>
                     <td className="px-4 py-3 text-right font-medium">{p.estimatedHours}h</td>
                     <td className="px-4 py-3 text-right text-gray-600">
-                      {p.costPerHour > 0 ? `$${p.costPerHour}` : '—'}
+                      {p.costPerHour > 0 ? `$${currencyFormatter.format(p.costPerHour)}` : '—'}
                     </td>
                     <td className="px-4 py-3 text-right font-medium">
-                      {p.costPerHour > 0 ? `$${(p.estimatedHours * p.costPerHour).toLocaleString()}` : '—'}
+                      {p.costPerHour > 0 ? `$${currencyFormatter.format(p.estimatedHours * p.costPerHour)}` : '—'}
                     </td>
                     <td className="px-4 py-3 text-gray-500 max-w-[160px] truncate" title={p.notes}>
                       {p.notes || '—'}
@@ -259,6 +284,7 @@ export default function ProjectsPage() {
                           <button
                             onClick={() => { setEditProject(p); setShowModal(true) }}
                             className="text-blue-500 hover:text-blue-700 transition-colors"
+                            aria-label={`Editar ${p.name}`}
                             title="Editar"
                           >
                             <Pencil size={14} />
@@ -266,6 +292,7 @@ export default function ProjectsPage() {
                           <button
                             onClick={() => deleteProject(p.id)}
                             className="text-red-400 hover:text-red-600 transition-colors"
+                            aria-label={`Eliminar ${p.name}`}
                             title="Eliminar"
                           >
                             <Trash2 size={14} />
@@ -284,7 +311,7 @@ export default function ProjectsPage() {
                   <td className="px-4 py-3 text-right">{totalHours}h</td>
                   <td />
                   <td className="px-4 py-3 text-right">
-                    {totalCost > 0 ? `$${totalCost.toLocaleString()}` : '—'}
+                    {totalCost > 0 ? `$${currencyFormatter.format(totalCost)}` : '—'}
                   </td>
                   <td colSpan={isAdmin ? 2 : 1} />
                 </tr>
@@ -300,5 +327,13 @@ export default function ProjectsPage() {
         onClose={() => { setShowModal(false); setEditProject(null) }}
       />
     </div>
+  )
+}
+
+export default function ProjectsPage() {
+  return (
+    <Suspense>
+      <ProjectsPageInner />
+    </Suspense>
   )
 }

@@ -543,6 +543,7 @@ export default function MisHorasPage() {
                         type="number"
                         step="0.25"
                         min="0"
+                        aria-label={`Horas de ${rowLabel(key)}`}
                         defaultValue={row[selectedDay] ?? ''}
                         onBlur={(e) => {
                           const val = e.target.value === '' ? 0 : Number(e.target.value)
@@ -606,6 +607,8 @@ export default function MisHorasPage() {
                   <div className="flex gap-1">
                     <input
                       type="text"
+                      name="new-task-name"
+                      autoComplete="off"
                       value={newTaskName}
                       onChange={(e) => setNewTaskName(e.target.value)}
                       placeholder="Nombre de la tarea"
@@ -702,7 +705,7 @@ export default function MisHorasPage() {
                             <span className="truncate">{rowLabel(key)}</span>
                           </div>
                         </td>
-                        {days.map((day) => (
+                        {days.map((day, dayIndex) => (
                           <td key={`${key}-${day}-${row[day] ?? 0}`} style={{
                             backgroundColor: isToday(day) ? '#fffbeb' : isWeekendDay(day) ? '#F3F4F6' : 'white',
                             width: CELL_W, minWidth: CELL_W,
@@ -713,6 +716,7 @@ export default function MisHorasPage() {
                               type="number"
                               step="0.25"
                               min="0"
+                              aria-label={`Horas de ${rowLabel(key)} el ${DAY_LABELS[dayIndex]} ${day.substring(8)}`}
                               defaultValue={row[day] ?? ''}
                               onBlur={(e) => {
                                 const val = e.target.value === '' ? 0 : Number(e.target.value)
@@ -794,6 +798,8 @@ export default function MisHorasPage() {
                           <div className="flex gap-1">
                             <input
                               type="text"
+                              name="new-task-name"
+                              autoComplete="off"
                               value={newTaskName}
                               onChange={(e) => setNewTaskName(e.target.value)}
                               placeholder="Nombre de la tarea"
