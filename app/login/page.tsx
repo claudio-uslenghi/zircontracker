@@ -9,7 +9,11 @@ import { Eye, EyeOff } from 'lucide-react'
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const callbackUrl = searchParams.get('callbackUrl') ?? '/gantt'
+  // '/dashboard' porque es rol-agnóstico (ALWAYS_ALLOWED_AUTHENTICATED en
+  // middleware.ts) — mismo destino que ya usa "Ir al inicio" en /unauthorized.
+  // '/gantt' como default rompía el login de cualquier rol sin permiso de
+  // página ahí (ej. colaborador): caía directo en "Acceso denegado".
+  const callbackUrl = searchParams.get('callbackUrl') ?? '/dashboard'
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
