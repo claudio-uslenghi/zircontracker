@@ -3088,3 +3088,102 @@ QA propia en vivo (mes ficticio, limpiado al terminar) contra la API real de Goo
   confirma que el nombre dinámico se está agregando correctamente.
 - Tab "Horas por proyecto" confirmado con celdas realmente vacías (no "0") para toda persona/
   proyecto sin horas ese mes ficticio.
+
+---
+
+# Spec: login de colaborador, orden de tabs en Vacaciones, auditoría mobile del rol colaborador
+
+## Objetivo
+
+Tres pedidos sobre el rol `colaborador` (no-admin): un bug de login, un reorden de tabs, y una
+auditoría de usabilidad mobile de todo lo que ese rol puede ver.
+
+## 1. Bug: login de colaborador cae en "Acceso denegado"
+
+**Causa raíz confirmada** (no es un problema de permisos del rol, es la página de login):
+`app/login/page.tsx` — `const callbackUrl = searchParams.get('callbackUrl') ?? '/gantt'`. Cuando
+no hay un `callbackUrl` en la URL (es decir, cuando alguien entra directo a `/login` en vez de ser
+rebotado ahí desde una página protegida puntual), el destino post-login es **siempre `/gantt`**,
+sin importar el rol. `colaborador` tiene permiso de página para `/projects`, `/holidays`,
+`/mis-horas`, `/mi-reporte` (confirmado contra la tabla `PagePermission` real) — **pero no para
+`/gantt`** — el middleware lo rebota a `/unauthorized`. "Ir al inicio" ahí apunta a `/dashboard`,
+que es de los `ALWAYS_ALLOWED_AUTHENTICATED` (cualquier rol autenticado puede verla), por eso
+funciona.
+
+**Fix**: cambiar el fallback de `/login/page.tsx` de `/gantt` a `/dashboard` — mismo destino que ya
+usa "Ir al inicio", rol-agnóstico por diseño, sin necesidad de lógica nueva de "primera página según
+el rol".
+
+## 2. Orden de tabs en /holidays
+
+Hoy: `Lista → Calendario → Totales`, default `Lista`. Pedido: `Calendario → Lista → Totales`,
+default `Calendario`. Cambio de una línea en el array de tabs + el valor inicial de `useState` en
+`app/holidays/page.tsx` — no hay persistencia de la tab activa (ni URL param ni localStorage), así
+que no hay nada más que tocar.
+
+## 3. Auditoría mobile/UX del rol colaborador
+
+Páginas en alcance (todo lo que `colaborador` puede ver): `/dashboard`, `/projects`, `/holidays`
+(sus 3 tabs), `/mis-horas`, `/mi-reporte`, `/perfil`. Reviso en vivo (browser real, viewport 375px
+y desktop, con un usuario colaborador descartable) cada una con la misma lupa de accesibilidad/
+touch targets/mobile-first ya usada en auditorías anteriores de este proyecto. Resultado: hallazgos
+documentados abajo, no implemento ningún cambio de UX hasta confirmar prioridad con el usuario —
+a diferencia de los puntos 1 y 2 (causa raíz clara, se implementan directo).
+
+## Testing strategy
+
+Puntos 1 y 2: typecheck/build + QA en vivo (browser, usuario colaborador descartable) confirmando
+el flujo de login completo y el nuevo orden/default de tabs. Punto 3: auditoría, no QA de un
+cambio todavía no implementado.
+
+## Boundaries
+
+- **Never**: tocar el middleware o el matrix de `PagePermission` — el bug es pura UX de
+  redirección, los permisos en sí están bien.
+- **Ask first**: cualquier cambio de UX que salga de la auditoría del punto 3, antes de
+  implementarlo.
+
+## Implementado y verificado (puntos 1 y 2)
+
+QA en vivo (browser, usuario colaborador descartable, Turso real):
+
+- **Login de colaborador**: entrando directo a `/login` (sin `callbackUrl`, el escenario exacto
+  del bug) y logueando, cae directo en `/dashboard` — sin pasar por "Acceso denegado".
+- **Tabs de /holidays**: orden confirmado "Calendario | Lista | Totales", con Calendario activo
+  por default. Probados los 3 tabs en mobile (375px), ninguno desborda la página (solo overflow
+  contenido donde ya existía, ver auditoría).
+
+## Auditoría mobile/UX — hallazgos (punto 3, no implementado, a confirmar prioridad)
+
+Páginas revisadas en vivo, mobile 375px + desktop, con el mismo usuario colaborador descartable
+(vinculado a un Resource descartable para poder ver las grillas reales): `/dashboard`,
+`/projects`, `/holidays` (sus 3 tabs), `/mis-horas`, `/mi-reporte`, `/perfil`, y el menú lateral
+mobile.
+
+**En general: sólido.** Ninguna página desborda la página completa en mobile (`document.
+documentElement.scrollWidth === 375` confirmado en todas) — el patrón de `overflow-x-auto`
+contenido en las tablas angostas ya funciona bien. El menú lateral mobile muestra exactamente las
+5 páginas que corresponden a `colaborador` (Dashboard/Proyectos/Feriados & Vacaciones/Mis Horas/
+Mi Reporte), con buen tamaño de touch target. `/mi-reporte` tiene un layout de filtros mobile-
+first genuinamente bueno (todo apilado verticalmente, inputs de fecha nativos a todo el ancho).
+
+Hallazgos concretos, de menor a mayor impacto:
+
+1. **Tablas con scroll horizontal sin ninguna señal visual** (`/projects`, `/holidays` → Lista):
+   el contenedor sí scrollea de forma contenida (no se lleva el header/filtros con él, eso está
+   bien resuelto), pero no hay ningún indicio — ni sombra de desvanecido, ni flecha, ni texto — de
+   que hay más columnas a la derecha (en Proyectos, "Prioridad" y las columnas de horas/$ quedan
+   completamente fuera de vista inicial). Un colaborador podría no darse cuenta de que existen.
+2. **Botones de tabs (Calendario/Lista/Totales en /holidays) miden 40px de alto** — 4px por debajo
+   del mínimo recomendado de 44px para touch targets.
+3. **"Agregar vacación" se muestra deshabilitado para colaborador, sin explicación** — el botón
+   aparece gris pero clickeable-looking, sin tooltip ni texto que explique por qué no se puede
+   usar. Puede generar la pregunta "¿por qué no me deja?" sin respuesta a mano.
+4. **Tarjetas de estadísticas en /mis-horas con texto truncado** ("Horas semana" se corta a "H...")
+   — las tarjetas son demasiado angostas para su contenido en 375px.
+5. **Dashboard muestra métricas de toda la empresa** ("Usuarios activos", "Proyectos" — conteos
+   globales) a un rol que no administra ni usuarios ni proyectos — no es un problema de mobile,
+   pero vale la pregunta de si son relevantes para lo que un colaborador necesita ver al entrar.
+
+Ninguno de estos 5 puntos es bloqueante ni rompe nada — son mejoras de pulido. Quedan documentados
+acá, sin implementar, a la espera de que el usuario priorice cuáles (si alguno) encarar.

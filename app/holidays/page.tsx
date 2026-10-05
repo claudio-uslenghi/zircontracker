@@ -38,7 +38,7 @@ export default function HolidaysPage() {
   const [showVacationCsvModal, setShowVacationCsvModal] = useState(false)
   const [showCsvModal, setShowCsvModal] = useState(false)
   const [filterCountry, setFilterCountry] = useState<string>('')
-  const [view, setView] = useState<'list' | 'calendar' | 'totals'>('list')
+  const [view, setView] = useState<'list' | 'calendar' | 'totals'>('calendar')
   const [showSyncModal, setShowSyncModal] = useState(false)
 
   const [vacationSearch, setVacationSearch] = useState('')
@@ -152,7 +152,7 @@ export default function HolidaysPage() {
         <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Vacaciones & Feriados</h1>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5" role="group" aria-label="Vista">
-            {([['list', 'Lista', List], ['calendar', 'Calendario', CalendarDays], ['totals', 'Totales', BarChart3]] as const).map(([key, label, Icon]) => (
+            {([['calendar', 'Calendario', CalendarDays], ['list', 'Lista', List], ['totals', 'Totales', BarChart3]] as const).map(([key, label, Icon]) => (
               <button
                 key={key}
                 onClick={() => setView(key)}
