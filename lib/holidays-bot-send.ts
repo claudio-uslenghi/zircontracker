@@ -68,20 +68,26 @@ export async function runHolidaysBot(opts: {
       // El canal lo fija el webhook en sí (no es overrideable por request —
       // verificado contra docs.slack.dev), y la imagen tiene que salir de
       // una URL pública: Slack la descarga del lado de ellos, no funciona
-      // contra localhost en desarrollo. NEXTAUTH_URL puede no estar seteada
-      // en el entorno de producción de Vercel (es independiente de las env
-      // vars locales); VERCEL_PROJECT_PRODUCTION_URL/VERCEL_URL las inyecta
-      // Vercel automáticamente en todo deploy — la primera es la que Vercel
-      // documenta específicamente para "reliably generate links that point
-      // to production such as OG-image URLs" (nuestro caso de uso exacto).
-      // Si ninguna está, mejor fallar con un mensaje claro que mandarle a
-      // Slack una image_url relativa.
+      // contra localhost en desarrollo.
+      //
+      // NEXTAUTH_URL NO se usa acá a propósito, aunque esté seteada: en este
+      // proyecto apunta a un dominio viejo (gantt-app.vercel.app, ya dado de
+      // baja) en vez del dominio actual (zircon-tracker.vercel.app) —
+      // confirmado en producción (el link posteado a Slack daba 404).
+      // Es una env var para los callbacks de NextAuth, no para esto; usarla
+      // acá fue el bug. VERCEL_PROJECT_PRODUCTION_URL es la que Vercel
+      // mantiene automáticamente correcta en cada deploy, documentada
+      // específicamente para "reliably generate links that point to
+      // production such as OG-image URLs" — nuestro caso de uso exacto — así
+      // que va primero. VERCEL_URL queda de último respaldo (preview
+      // deployments sin alias de producción).
       const baseUrl =
-        process.env.NEXTAUTH_URL ||
         (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
-        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+        process.env.NEXTAUTH_URL ||
+        ''
       if (!baseUrl) {
-        throw new Error('Falta configurar NEXTAUTH_URL (o VERCEL_URL) para poder armar la URL pública de la imagen.')
+        throw new Error('Falta configurar VERCEL_PROJECT_PRODUCTION_URL (o NEXTAUTH_URL) para poder armar la URL pública de la imagen.')
       }
       // El nombre de archivo con extensión .png es obligatorio: Slack solo
       // unfurla imágenes cuya URL termina en una extensión reconocible
