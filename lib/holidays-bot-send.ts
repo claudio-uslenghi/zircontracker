@@ -70,15 +70,23 @@ export async function runHolidaysBot(opts: {
       // una URL pública: Slack la descarga del lado de ellos, no funciona
       // contra localhost en desarrollo. NEXTAUTH_URL puede no estar seteada
       // en el entorno de producción de Vercel (es independiente de las env
-      // vars locales); VERCEL_URL la inyecta Vercel automáticamente en todo
-      // deploy, así que sirve de respaldo confiable. Si ninguna de las dos
-      // está, mejor fallar con un mensaje claro que mandarle a Slack una
-      // image_url relativa — eso es lo que producía el "invalid_blocks".
-      const baseUrl = process.env.NEXTAUTH_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+      // vars locales); VERCEL_PROJECT_PRODUCTION_URL/VERCEL_URL las inyecta
+      // Vercel automáticamente en todo deploy — la primera es la que Vercel
+      // documenta específicamente para "reliably generate links that point
+      // to production such as OG-image URLs" (nuestro caso de uso exacto).
+      // Si ninguna está, mejor fallar con un mensaje claro que mandarle a
+      // Slack una image_url relativa.
+      const baseUrl =
+        process.env.NEXTAUTH_URL ||
+        (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') ||
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
       if (!baseUrl) {
         throw new Error('Falta configurar NEXTAUTH_URL (o VERCEL_URL) para poder armar la URL pública de la imagen.')
       }
-      const imageUrl = `${baseUrl}/api/holidays-bot/image?year=${data.year}&month=${data.month}`
+      // El nombre de archivo con extensión .png es obligatorio: el block
+      // "image" de Slack valida la extensión de la URL antes de intentar
+      // descargarla — ver app/api/holidays-bot/image/[filename]/route.tsx.
+      const imageUrl = `${baseUrl}/api/holidays-bot/image/${data.year}-${data.month}.png`
       await postToSlackWebhook({
         webhookUrl,
         text,

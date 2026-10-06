@@ -141,7 +141,7 @@ export default function HolidaysBotModal({ open, onClose }: Props) {
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     key={imgKey}
-                    src={`/api/holidays-bot/image?year=${year}&month=${month}`}
+                    src={`/api/holidays-bot/image/${year}-${month}.png`}
                     alt={`Preview feriados ${MONTHS_ES[month - 1]} ${year}`}
                     className="w-full rounded-lg border border-gray-200"
                   />
