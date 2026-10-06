@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { COUNTRIES } from '@/lib/countries'
 import type { CountryHoliday } from '@/types'
+
+const CUSTOM_COUNTRY = '__custom__'
 
 const schema = z.object({
   country: z.string().min(1),
@@ -25,19 +27,27 @@ interface Props {
 export default function HolidayModal({ open, onClose, editHoliday }: Props) {
   const qc = useQueryClient()
   const isEdit = !!editHoliday
+  // El backend ya acepta cualquier string de país (sin whitelist) — el combo
+  // ofrece los países conocidos para elegir rápido, pero permite escribir
+  // uno nuevo (ej. un país sin feriados cargados todavía) en vez de quedar
+  // bloqueado a la lista fija de lib/countries.ts.
+  const [customCountry, setCustomCountry] = useState(false)
 
-  const { register, handleSubmit, reset, formState: { isSubmitting } } = useForm<FormData>({
+  const { register, handleSubmit, reset, setValue, formState: { isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
   })
 
   useEffect(() => {
     if (editHoliday) {
+      const known = COUNTRIES.some((c) => c.name === editHoliday.country)
+      setCustomCountry(!known)
       reset({
         country: editHoliday.country,
         date: editHoliday.date.substring(0, 10),
         name: editHoliday.name,
       })
     } else {
+      setCustomCountry(false)
       reset({ country: '', date: '', name: '' })
     }
   }, [editHoliday, open, reset])
@@ -83,12 +93,45 @@ export default function HolidayModal({ open, onClose, editHoliday }: Props) {
         <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">País *</label>
-            <select {...register('country')} disabled={isEdit} className="w-full border rounded px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-500">
-              <option value="">Seleccionar...</option>
-              {COUNTRIES.map((c) => (
-                <option key={c.code} value={c.name}>{c.flag} {c.name}</option>
-              ))}
-            </select>
+            {customCountry || isEdit ? (
+              <div className="flex items-center gap-2">
+                <input
+                  {...register('country')}
+                  disabled={isEdit}
+                  placeholder="Nombre del país"
+                  className="w-full border rounded px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-500"
+                />
+                {!isEdit && (
+                  <button
+                    type="button"
+                    onClick={() => { setCustomCountry(false); setValue('country', '') }}
+                    className="text-xs text-gray-500 hover:text-gray-700 whitespace-nowrap"
+                  >
+                    Elegir de la lista
+                  </button>
+                )}
+              </div>
+            ) : (
+              <select
+                disabled={isEdit}
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value === CUSTOM_COUNTRY) {
+                    setCustomCountry(true)
+                    setValue('country', '')
+                  } else {
+                    setValue('country', e.target.value)
+                  }
+                }}
+                className="w-full border rounded px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-500"
+              >
+                <option value="">Seleccionar...</option>
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.name}>{c.flag} {c.name}</option>
+                ))}
+                <option value={CUSTOM_COUNTRY}>+ Otro país (escribir)</option>
+              </select>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Fecha *</label>

@@ -8,6 +8,7 @@ import {
   FolderKanban,
   Users,
   CalendarDays,
+  Flag,
   ChevronLeft,
   ChevronRight,
   Shield,
@@ -35,7 +36,8 @@ const NAV_ITEMS = [
   { href: '/gantt', icon: BarChart3, label: 'Gantt' },
   { href: '/projects', icon: FolderKanban, label: 'Proyectos' },
   { href: '/resources', icon: Users, label: 'Recursos' },
-  { href: '/holidays', icon: CalendarDays, label: 'Feriados & Vacaciones' },
+  { href: '/holidays', icon: CalendarDays, label: 'Vacaciones' },
+  { href: '/feriados', icon: Flag, label: 'Feriados' },
   { href: '/mis-horas', icon: Clock, label: 'Mis Horas' },
   { href: '/mi-reporte', icon: CalendarClock, label: 'Mi Reporte' },
 ]

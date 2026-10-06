@@ -174,8 +174,15 @@ export function HolidaysBotImage({ data, titleImageDataUrl }: { data: HolidaysBo
           {data.countries.map((c) => (
             <div key={c.country} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={flagUrl(c.code)} width={36} height={24} style={{ borderRadius: 3 }} alt="" />
+                {c.hasKnownFlag ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={flagUrl(c.code)} width={36} height={24} style={{ borderRadius: 3 }} alt="" />
+                ) : (
+                  // Sin código ISO real (país fuera de lib/countries.ts) —
+                  // un círculo en vez de una bandera que no existe en
+                  // flagcdn (rompía toda la imagen, ver hasKnownFlag).
+                  <div style={{ display: 'flex', width: 36, height: 24, borderRadius: 3, backgroundColor: '#d9e2d8' }} />
+                )}
                 <span style={{ fontFamily: 'Inter', fontSize: 24, fontWeight: 700, color: INK }}>{c.country}</span>
               </div>
               {c.holidays.map((h) => (

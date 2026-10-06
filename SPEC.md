@@ -3399,3 +3399,172 @@ oficial de Slack (docs.slack.dev) antes de adaptar el código:
   en vez de (o además de) este webhook — `runHolidaysBot` prioriza `SLACK_WEBHOOK_URL` si está
   configurada, y cae al bot token si no.
 - `SLACK_WEBHOOK_URL` quedó guardada en `.env.local` (gitignoreado) — no se repite en el chat.
+
+# Spec: Feriados — combo editable, selección manual en Holidays Bot, página propia
+
+## Objective
+
+Cuatro pedidos relacionados, surgidos de usar Holidays Bot en producción:
+
+1. **Bug**: el combo de países al agregar un feriado (`HolidayModal`) está limitado a una lista fija
+   de 21 países (`lib/countries.ts`) sin Yemen — pero ya existe un feriado de Yemen en la base
+   (cargado en algún momento vía CSV, que no valida contra esa lista) que no se puede volver a
+   seleccionar ni editar correctamente desde el modal.
+2. **Bug/gap de producto**: Holidays Bot no mandó los feriados de Yemen porque hoy el resumen solo
+   incluye países con al menos un `Resource` activo — Yemen no tiene ninguno cargado actualmente.
+3. **Feature**: en el preview de Holidays Bot, poder incluir/excluir países a mano antes de enviar
+   — en particular, poder incluir un país sin recursos hoy (como Yemen), no solo excluir.
+4. **Reorganización**: separar la gestión de "Feriados por País" (lista, alta/baja, import/export
+   CSV, botón Holidays Bot) de "Vacaciones" en una página propia del menú — la página actual quedó
+   sobrecargada.
+
+Los puntos 2 y 3 se resuelven con el mismo cambio: el preview deja de filtrar por recursos y
+muestra TODOS los países con feriados cargados ese mes, con checkboxes para incluir/excluir antes
+de confirmar el envío — Yemen va a aparecer ahí y el admin lo puede tildar.
+
+**Éxito** = se puede cargar un feriado de un país nuevo (no en la lista fija) sin que quede
+atascado; el admin puede mandar un resumen de Slack que incluya países sin recursos hoy si quiere;
+"Feriados por País" vive en su propia página del menú, accesible para quien ya la veía (incluido
+colaborador, en solo lectura); el Calendario de Vacaciones sigue marcando feriados exactamente
+igual que hoy.
+
+## Hallazgos clave de la exploración
+
+- `lib/countries.ts`: `COUNTRIES` tiene 21 entradas fijas (AR/BO/BR/CL/CO/CR/CU/EC/SV/ES/GT/HN/MX/
+  NI/PA/PY/PE/DO/UY/VE/US) + "Otro" (🌍) genérico. Se usa **solo para pintar el combo** — nunca para
+  validar.
+- `app/api/country-holidays/import/route.ts` (POST, usado tanto por el alta individual del modal
+  como por el import CSV masivo) acepta cualquier string en `country` sin validarlo contra la
+  lista — así es como ya existe un `CountryHoliday` con `country: "Yemen"` en la base aunque nunca
+  estuvo en el combo. El PUT de edición (`app/api/country-holidays/[id]/route.ts`) no toca
+  `country` (el combo viene `disabled` en edición).
+- `components/modals/HolidayModal.tsx`: `<select>` nativo poblado directo desde `COUNTRIES`
+  (línea 8/86-90) — no usa el componente compartido `SearchableSelect`.
+- `lib/holidays-bot-data.ts` → `getCountriesWithResources()`: `SELECT DISTINCT country FROM
+  Resource`, sin flag de activo/inactivo (ya documentado en el spec de Holidays Bot). Es el único
+  filtro que decide qué países entran al resumen — nada tiene que ver con `lib/countries.ts`.
+- `app/holidays/page.tsx` — mapa de lo que hay hoy en una sola página:
+  - Header: tabs Calendario/Lista/Totales + botones admin "Sincronizar con Google Sheet" y
+    "Holidays Bot" (siempre visibles, no dependen del tab activo).
+  - **Calendario**: `<HolidaysCalendar vacations={} holidays={} />` — ya superpone ambos tipos de
+    dato en una sola vista.
+  - **Totales**: `<VacationTotals>` — solo vacaciones.
+  - **Lista**: dos secciones independientes hoy en la misma pestaña — "Vacaciones programadas"
+    (búsqueda, CSV, alta, tabla) y "Feriados por País" (filtro por país, CSV, alta/baja, tabla
+    agrupada).
+  - Modals montados al pie: `HolidayModal`, `VacationModal`, `VacationCsvImportModal`,
+    `VacationSyncModal`, `HolidaysBotModal`, `CsvImportModal` (import CSV de feriados).
+- `components/layout/Sidebar.tsx`: `NAV_ITEMS` es un array plano `{href, icon, label}`
+  (línea 34-41); `/holidays` hoy es `{ href: '/holidays', icon: CalendarDays, label: 'Feriados &
+  Vacaciones' }`. Agregar una página nueva es agregar una entrada más.
+- `middleware.ts` gatea páginas no-admin por `token.allowedPages` (del JWT, snapshot de
+  `PagePermission`). Una ruta nueva sin su propia fila de `PagePermission` devuelve 403/redirect a
+  `/unauthorized` para cualquier rol no-admin — **incluido colaborador**, que hoy ve "Feriados por
+  País" en solo lectura dentro de `/holidays`.
+- `app/api/admin/permissions/route.ts`: `ALL_PAGES` es una lista hardcodeada que alimenta la
+  pantalla de Permisos — una página nueva necesita entrada ahí para que un admin la pueda
+  gestionar.
+
+## Decisiones confirmadas
+
+1. **Combo de países**: se vuelve editable/creable — sigue mostrando los países conocidos con
+   bandera (quick-select), pero permite escribir uno que no esté en la lista (como Yemen). Sin
+   tocar el backend (ya acepta cualquier string); el fix es puramente de UI en `HolidayModal`.
+   Patrón: opción especial "+ Otro país (escribir)" al final del `<select>` que revela un `<input>`
+   de texto libre; en modo edición, si `editHoliday.country` no está en `COUNTRIES`, mostrar
+   directo el input de texto (disabled, como ya pasa hoy) en vez de un `<select>` roto que no
+   encuentra la opción.
+2. **Preview de Holidays Bot — alcance de países**: `getHolidaysBotMonthData` deja de filtrar por
+   `Resource.country` — devuelve TODOS los países con `CountryHoliday` ese mes, cada uno con un
+   flag `hasResource: boolean` (para mostrar algo tipo "(sin recursos hoy)" al lado, informativo).
+   El preview muestra un checkbox por país, **todos marcados por defecto** (tengan o no recursos).
+   El admin destilda lo que no quiera mandar antes de confirmar.
+3. **Cron automático — sin cambios de comportamiento**: nadie revisa el envío mensual automático,
+   así que sigue mandando solo países con recursos hoy (el filtro actual), para no mandar de
+   sorpresa un país sin gente asignada sin que un humano lo haya confirmado. La selección manual
+   por checkbox es **exclusiva del flujo "Enviar ahora"/preview**, nunca del cron.
+4. **Split de páginas**: nueva página `/feriados` ("Feriados" en el menú, ícono `Flag` para
+   distinguirla de `/holidays`) con todo lo de "Feriados por País": lista, filtro, alta/baja,
+   import/export CSV, y el botón + modal de Holidays Bot (temáticamente es sobre feriados, no
+   vacaciones). `/holidays` se renombra a "Vacaciones" en el título de la página (el nav item
+   pasa a `label: 'Vacaciones'`) y conserva Calendario (sigue leyendo `countryHolidays` para
+   marcar feriados, solo lectura, sin la UI de gestión) y Totales tal cual están hoy; la pestaña
+   Lista queda solo con "Vacaciones programadas". "Sincronizar con Google Sheet" se queda en
+   Vacaciones (es de vacaciones, no de feriados).
+5. **Permisos**: migración de datos — toda fila de `PagePermission` que hoy tenga `page='/holidays'`
+   se copia a `page='/feriados'` con el mismo `roleId`, para que nadie pierda acceso (colaborador
+   en particular). Se agrega `/feriados` a `ALL_PAGES` en `app/api/admin/permissions/route.ts`.
+   Correr la migración contra Turso de producción queda sujeto a confirmación antes de ejecutarla
+   (boundary de "ask first" ya establecido en este proyecto).
+
+## Tech Stack
+
+Sin cambios: Next.js 14 App Router, Prisma + Turso, TanStack Query, react-hook-form + zod,
+Tailwind, lucide-react.
+
+## Project Structure
+
+```
+lib/countries.ts                      → sin cambios (sigue siendo la lista de quick-select)
+components/modals/HolidayModal.tsx    → + opción "Otro país" con input de texto libre
+lib/holidays-bot-data.ts              → getHolidaysBotMonthData ya no filtra por Resource.country;
+                                         CountryHolidaysGroup += hasResource: boolean
+lib/holidays-bot-send.ts              → runHolidaysBot acepta selectedCountries?: string[]
+                                         (solo aplica si trigger==='manual'; cron sigue filtrando
+                                         por hasResource internamente, sin tocar el contrato de
+                                         la función hacia afuera)
+app/api/holidays-bot/send/route.ts    → POST body += selectedCountries?: string[]
+components/modals/HolidaysBotModal.tsx → checkbox por país en el preview, todos marcados por
+                                         defecto; manda selectedCountries al confirmar envío
+app/feriados/page.tsx                 → página nueva: todo lo de "Feriados por País" que hoy vive
+                                         en app/holidays/page.tsx (lista, filtro, alta/baja, CSV,
+                                         Holidays Bot) + sus modals (HolidayModal, CsvImportModal,
+                                         HolidaysBotModal)
+app/holidays/page.tsx                 → se angosta a Vacaciones: Calendario (sigue leyendo
+                                         countryHolidays solo lectura) + Totales + Lista
+                                         (solo "Vacaciones programadas") + Sincronizar con
+                                         Google Sheet
+components/layout/Sidebar.tsx         → + NAV_ITEMS: { href: '/feriados', icon: Flag,
+                                         label: 'Feriados' }; label de '/holidays' → 'Vacaciones'
+app/api/admin/permissions/route.ts    → + '/feriados' en ALL_PAGES
+scripts/migrate-feriados-permission.ts → script puntual (patrón ya usado en este repo, ver
+                                         scripts/add-task-and-email.ts): copia filas de
+                                         PagePermission de '/holidays' a '/feriados'
+```
+
+## Code Style
+
+Seguir los patrones ya establecidos: componentes de modal con react-hook-form + zod (como
+`HolidayModal` ya hace), `SearchableSelect` no se toca (este modal nunca lo usó, se mantiene
+como `<select>` nativo + toggle a texto libre, cambio mínimo y contenido). Páginas con
+`Suspense` + `useSearchParams`/`useRouter` para estado de URL, mismo criterio que `/holidays` y
+`/projects` ya usan.
+
+## Testing Strategy
+
+Sin suite automatizada — verificación manual:
+- Cargar un feriado de un país no listado (ej. un país ficticio de prueba, no tocar datos reales)
+  y confirmar que se guarda y aparece correctamente.
+- Editar el feriado de Yemen ya existente y confirmar que el modal lo muestra bien (ya no roto).
+- Preview de Holidays Bot: confirmar que Yemen aparece en la lista con checkbox, marcado por
+  defecto, con alguna marca visual de "sin recursos hoy"; destildarlo y confirmar que no sale en
+  el texto/imagen generados; volver a tildarlo y confirmar que sí sale.
+- Confirmar que el cron (invocado a mano contra el endpoint con el `CRON_SECRET`, no esperar al
+  día 1) sigue sin incluir países sin recursos, sin importar qué se haya tildado alguna vez en el
+  preview manual.
+- Con un usuario colaborador descartable: confirmar que ve "Feriados" en el menú y puede entrar
+  (solo lectura, sin botones de alta/baja/CSV/Holidays Bot), y que `/holidays` (ahora "Vacaciones")
+  sigue funcionando igual que antes, con el Calendario marcando feriados.
+- Confirmar que un admin ve ambas páginas completas, y que el Calendario de Vacaciones sigue
+  mostrando los mismos feriados que antes del split (comparar antes/después).
+
+## Boundaries
+
+- **Always**: la migración de `PagePermission` nunca debe dejar un rol que hoy ve `/holidays` sin
+  la fila equivalente para `/feriados` — colaborador en particular no puede perder acceso de
+  lectura a feriados.
+- **Ask first**: correr la migración de `PagePermission` contra Turso de producción.
+- **Never**: tocar el filtro del cron automático (sigue siendo solo países con recursos, sin
+  excepción, sin selección manual); romper la data existente de `CountryHoliday` con country
+  "Yemen" u otros no-listados al hacer el fix del combo (son datos reales, no se tocan ni se
+  migran a otro string).

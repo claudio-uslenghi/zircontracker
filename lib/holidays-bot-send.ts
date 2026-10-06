@@ -1,5 +1,10 @@
 import { prisma } from '@/lib/prisma'
-import { getHolidaysBotMonthData, buildHolidaysBotText, type HolidaysBotMonthData } from '@/lib/holidays-bot-data'
+import {
+  getHolidaysBotMonthData,
+  buildHolidaysBotText,
+  filterHolidaysBotCountries,
+  type HolidaysBotMonthData,
+} from '@/lib/holidays-bot-data'
 import { renderHolidaysBotImagePng } from '@/lib/holidays-bot-image'
 import { postImageToSlack, postToSlackWebhook } from '@/lib/slack'
 
@@ -8,9 +13,10 @@ export type Trigger = 'cron' | 'manual'
 
 export interface HolidaysBotOutcome {
   dryRun: boolean
-  skipped: boolean // no hubo feriados ese mes para ningún país con recursos
-  data: HolidaysBotMonthData
-  text: string
+  skipped: boolean // no hubo feriados ese mes para los países incluidos
+  data: HolidaysBotMonthData // siempre el set completo del mes, para pintar los checkboxes
+  text: string // refleja la selección efectiva (ver sentCountries)
+  sentCountries: string[] // qué países se usaron para armar text/imagen esta vez
   slackTs?: string
   slackPermalink?: string
 }
@@ -31,6 +37,16 @@ async function recordRun(trigger: Trigger, data: HolidaysBotMonthData, ok: boole
   })
 }
 
+// Decide qué países se usan si el caller no mandó una selección explícita:
+// el cron (nadie revisa el envío automático) y cualquier envío real sin
+// selección explícita se quedan con el filtro de siempre (solo países con
+// recursos hoy); el preview sin selección explícita muestra todo, porque
+// ahí el default confirmado es "todo marcado, el admin destilda".
+function defaultCountries(data: HolidaysBotMonthData, dryRun: boolean): string[] {
+  if (dryRun) return data.countries.map((c) => c.country)
+  return data.countries.filter((c) => c.hasResource).map((c) => c.country)
+}
+
 // Núcleo compartido por el cron, el botón "Enviar ahora" y el preview.
 // dryRun=true nunca toca Slack ni registra una corrida (mismo criterio que
 // vacations/sync): solo arma el texto + genera la imagen para mostrar.
@@ -39,18 +55,21 @@ export async function runHolidaysBot(opts: {
   month: number
   trigger: Trigger
   dryRun: boolean
+  selectedCountries?: string[]
 }): Promise<HolidaysBotOutcome> {
   const data = await getHolidaysBotMonthData(opts.year, opts.month)
-  const text = buildHolidaysBotText(data)
-  const skipped = data.countries.length === 0
+  const effectiveCountries = opts.selectedCountries ?? defaultCountries(data, opts.dryRun)
+  const filtered = filterHolidaysBotCountries(data, effectiveCountries)
+  const text = buildHolidaysBotText(filtered)
+  const skipped = filtered.countries.length === 0
 
   if (opts.dryRun) {
-    return { dryRun: true, skipped, data, text }
+    return { dryRun: true, skipped, data, text, sentCountries: effectiveCountries }
   }
 
   if (skipped) {
-    await recordRun(opts.trigger, data, true, 'sin feriados este mes')
-    return { dryRun: false, skipped: true, data, text }
+    await recordRun(opts.trigger, filtered, true, 'sin feriados este mes para los países incluidos')
+    return { dryRun: false, skipped: true, data, text, sentCountries: effectiveCountries }
   }
 
   const webhookUrl = process.env.SLACK_WEBHOOK_URL
@@ -92,10 +111,13 @@ export async function runHolidaysBot(opts: {
       // El nombre de archivo con extensión .png es obligatorio: Slack solo
       // unfurla imágenes cuya URL termina en una extensión reconocible
       // (png/jpg/jpeg/gif) — ver app/api/holidays-bot/image/[filename]/route.tsx.
-      const imageUrl = `${baseUrl}/api/holidays-bot/image/${data.year}-${data.month}.png`
+      // La ruta la pega Slack sin sesión, así que la selección de países
+      // viaja en la query string para que la imagen coincida con el texto.
+      const countriesParam = encodeURIComponent(effectiveCountries.join(','))
+      const imageUrl = `${baseUrl}/api/holidays-bot/image/${data.year}-${data.month}.png?countries=${countriesParam}`
       await postToSlackWebhook({ webhookUrl, text, imageUrl })
     } else if (token && channelId) {
-      const png = await renderHolidaysBotImagePng(data)
+      const png = await renderHolidaysBotImagePng(filtered)
       const filename = `holidays-${data.year}-${String(data.month).padStart(2, '0')}.png`
       const result = await postImageToSlack({ token, channelId, imageBuffer: png.buffer as ArrayBuffer, filename, text })
       ts = result.ts
@@ -104,11 +126,11 @@ export async function runHolidaysBot(opts: {
       throw new Error('Falta configurar SLACK_HOLIDAYS_CHANNEL_ID junto con SLACK_BOT_TOKEN.')
     }
 
-    await recordRun(opts.trigger, data, true, JSON.stringify({ countries: data.countries.map((c) => c.country) }))
-    return { dryRun: false, skipped: false, data, text, slackTs: ts, slackPermalink: permalink }
+    await recordRun(opts.trigger, filtered, true, JSON.stringify({ countries: filtered.countries.map((c) => c.country) }))
+    return { dryRun: false, skipped: false, data, text, sentCountries: effectiveCountries, slackTs: ts, slackPermalink: permalink }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error'
-    await recordRun(opts.trigger, data, false, message)
+    await recordRun(opts.trigger, filtered, false, message)
     throw err
   }
 }
