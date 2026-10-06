@@ -83,16 +83,11 @@ export async function runHolidaysBot(opts: {
       if (!baseUrl) {
         throw new Error('Falta configurar NEXTAUTH_URL (o VERCEL_URL) para poder armar la URL pública de la imagen.')
       }
-      // El nombre de archivo con extensión .png es obligatorio: el block
-      // "image" de Slack valida la extensión de la URL antes de intentar
-      // descargarla — ver app/api/holidays-bot/image/[filename]/route.tsx.
+      // El nombre de archivo con extensión .png es obligatorio: Slack solo
+      // unfurla imágenes cuya URL termina en una extensión reconocible
+      // (png/jpg/jpeg/gif) — ver app/api/holidays-bot/image/[filename]/route.tsx.
       const imageUrl = `${baseUrl}/api/holidays-bot/image/${data.year}-${data.month}.png`
-      await postToSlackWebhook({
-        webhookUrl,
-        text,
-        imageUrl,
-        imageAlt: `Feriados de ${data.monthNameEs} ${data.year}`,
-      })
+      await postToSlackWebhook({ webhookUrl, text, imageUrl })
     } else if (token && channelId) {
       const png = await renderHolidaysBotImagePng(data)
       const filename = `holidays-${data.year}-${String(data.month).padStart(2, '0')}.png`
