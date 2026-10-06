@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
       trigger: 'cron',
       dryRun: false,
     })
-    console.log('[holidays-bot]', outcome.skipped ? 'sin feriados este mes' : `enviado, ${outcome.data.countries.length} país(es)`)
+    console.log('[holidays-bot]', outcome.skipped ? 'sin feriados este mes' : `enviado, ${outcome.sentCountries.length} país(es)`)
     return NextResponse.json({ ok: true, skipped: outcome.skipped })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error'

@@ -15,12 +15,13 @@ const ALL_PAGES = [
   '/projects',
   '/resources',
   '/holidays',
+  '/feriados',
   '/admin/users',
   '/admin/roles',
   '/admin/permissions',
 ]
 
-const PLANNER_PAGES = ['/gantt', '/projects', '/resources', '/holidays']
+const PLANNER_PAGES = ['/gantt', '/projects', '/resources', '/holidays', '/feriados']
 const VIEWER_PAGES = ['/gantt']
 
 async function main() {

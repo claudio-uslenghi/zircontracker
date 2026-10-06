@@ -23,8 +23,11 @@ export async function GET() {
   return NextResponse.json(last)
 }
 
-// Body: { year?, month?, dryRun? (default true) }. El botón de preview en la
-// UI siempre manda dryRun:true primero; "Enviar ahora" manda dryRun:false.
+// Body: { year?, month?, dryRun? (default true), selectedCountries?: string[] }.
+// El botón de preview en la UI siempre manda dryRun:true primero; "Enviar
+// ahora" manda dryRun:false. selectedCountries es la selección por checkbox
+// del admin (todos los países del mes marcados por defecto) — sin ella, el
+// envío real cae al filtro de siempre (solo países con recursos hoy).
 export async function POST(req: NextRequest) {
   const denied = await adminOr403()
   if (denied) return denied
@@ -34,9 +37,12 @@ export async function POST(req: NextRequest) {
   const year = Number(body.year) || now.getFullYear()
   const month = Number(body.month) || now.getMonth() + 1
   const dryRun = body.dryRun !== false
+  const selectedCountries = Array.isArray(body.selectedCountries)
+    ? body.selectedCountries.filter((c: unknown) => typeof c === 'string')
+    : undefined
 
   try {
-    const outcome = await runHolidaysBot({ year, month, trigger: 'manual', dryRun })
+    const outcome = await runHolidaysBot({ year, month, trigger: 'manual', dryRun, selectedCountries })
     return NextResponse.json(outcome)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error'
