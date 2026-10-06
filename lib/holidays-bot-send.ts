@@ -68,8 +68,16 @@ export async function runHolidaysBot(opts: {
       // El canal lo fija el webhook en sí (no es overrideable por request —
       // verificado contra docs.slack.dev), y la imagen tiene que salir de
       // una URL pública: Slack la descarga del lado de ellos, no funciona
-      // contra localhost en desarrollo.
-      const baseUrl = process.env.NEXTAUTH_URL ?? ''
+      // contra localhost en desarrollo. NEXTAUTH_URL puede no estar seteada
+      // en el entorno de producción de Vercel (es independiente de las env
+      // vars locales); VERCEL_URL la inyecta Vercel automáticamente en todo
+      // deploy, así que sirve de respaldo confiable. Si ninguna de las dos
+      // está, mejor fallar con un mensaje claro que mandarle a Slack una
+      // image_url relativa — eso es lo que producía el "invalid_blocks".
+      const baseUrl = process.env.NEXTAUTH_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')
+      if (!baseUrl) {
+        throw new Error('Falta configurar NEXTAUTH_URL (o VERCEL_URL) para poder armar la URL pública de la imagen.')
+      }
       const imageUrl = `${baseUrl}/api/holidays-bot/image?year=${data.year}&month=${data.month}`
       await postToSlackWebhook({
         webhookUrl,
