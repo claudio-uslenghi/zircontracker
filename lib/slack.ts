@@ -70,19 +70,24 @@ export async function postImageToSlack(opts: {
   return { ts: file?.shares?.public?.[channelId]?.[0]?.ts ?? '', permalink: file?.permalink }
 }
 
-// Incoming Webhook: un bloque de texto (mrkdwn) + un bloque de imagen con
-// una URL pública (Slack la descarga del lado de ellos). El canal lo decide
-// el webhook mismo, no este payload.
-export async function postToSlackWebhook(opts: { webhookUrl: string; text: string; imageUrl: string; imageAlt: string }) {
+// Incoming Webhook: texto plano con la URL de la imagen al final, sin
+// Block Kit. Se probó un block top-level de tipo "image" primero y Slack
+// lo rechazaba con "400 invalid_blocks" en todos los casos — la doc oficial
+// de Incoming Webhooks solo muestra "image" como accessory DENTRO de un
+// section block, nunca como block independiente; no está confirmado que el
+// tipo top-level esté soportado en este endpoint. En vez de perseguir esa
+// combinación, se usa el unfurl automático de Slack: cualquier URL de
+// imagen (.png/.jpg/...) que aparezca en el texto del mensaje se expande
+// sola como preview incrustado (verificado contra la documentación
+// oficial — es el comportamiento default, unfurl_media no hace falta
+// pasarlo explícito salvo para desactivarlo). El canal lo decide el
+// webhook mismo, no este payload.
+export async function postToSlackWebhook(opts: { webhookUrl: string; text: string; imageUrl: string }) {
   const res = await fetch(opts.webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      text: opts.text,
-      blocks: [
-        { type: 'section', text: { type: 'mrkdwn', text: opts.text } },
-        { type: 'image', image_url: opts.imageUrl, alt_text: opts.imageAlt },
-      ],
+      text: `${opts.text}\n\n${opts.imageUrl}`,
     }),
   })
   if (!res.ok) {
