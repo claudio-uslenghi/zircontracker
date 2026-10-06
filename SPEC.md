@@ -3187,3 +3187,215 @@ Hallazgos concretos, de menor a mayor impacto:
 
 Ninguno de estos 5 puntos es bloqueante ni rompe nada — son mejoras de pulido. Quedan documentados
 acá, sin implementar, a la espera de que el usuario priorice cuáles (si alguno) encarar.
+
+# Spec: Holidays Bot — resumen mensual de feriados a Slack
+
+## Objective
+
+Pedido original (vía Will en Slack, relayando a Anita de RR.HH.): "una webapp donde se puedan
+definir los feriados de todo el año por país y que al inicio de cada mes envíe al Slack general un
+resumen de los feriados que caen ese mes para cada país + una imagen" (ver mensaje de referencia de
+Anabella: texto bilingüe ES/EN + una imagen tipo "Hello October 2026" con bandera y feriados por
+país, más un mini calendario con los días resaltados).
+
+La parte de "definir los feriados por país" **ya existe** en `/holidays` (`CountryHoliday`, CRUD
+admin completo, import/export CSV) — Claudio ya lo marcó en el hilo de Slack. Lo único que falta es
+la pieza de enviar a Slack. Decisión de arquitectura (confirmada con el usuario): esto **no es una
+app nueva ni va al monorepo** que Will propuso para herramientas de RR.HH. (ese monorepo queda para
+"Welcome Bot", que sí es 100% nuevo y sin superposición de datos) — Holidays Bot es una feature que
+se agrega a este mismo repo, reutilizando los datos y la UI admin que ya existen.
+
+**Éxito** = un admin puede previsualizar y disparar manualmente el resumen mensual desde `/holidays`
+contra el canal de prueba configurado, y el día 1 de cada mes un cron lo manda solo — un mensaje con
+texto bilingüe (ES/EN) + una imagen generada en el momento, con los feriados de ese mes agrupados
+por país, solo para los países donde ZirconTracker tiene recursos.
+
+## Hallazgos clave de la exploración
+
+- **`CountryHoliday`** (`country`, `date`, `name`, `@@unique([country, date])`) es la fuente de
+  verdad — una fila por fecha concreta, sin concepto de recurrencia anual. No hay auto-generación
+  de feriados del año siguiente: si en algún momento no se cargó el año en curso, el resumen de ese
+  mes sale vacío (no es un bug del bot, es una precondición de datos).
+- **No hay ningún flag de "activo/inactivo" en `Resource`** — no existe un soft-delete de recursos.
+  Para "países con recursos activos" voy a asumir: todo país que aparece en al menos un
+  `Resource.country` existente en la base, hoy. **Asunción a confirmar** — si en el futuro aparece
+  un concepto real de recurso inactivo, hay que revisar este filtro.
+- **No hay integración de Slack en el repo** (cero referencias a `slack`, sin bot token/webhook) —
+  se arma desde cero.
+- **No hay generación de imágenes en el repo** (sin `canvas`/`sharp`/`puppeteer`/`@vercel/og`/etc.)
+  — nueva dependencia necesaria.
+- **Patrón de cron ya establecido y 100% reutilizable** (`app/api/cron/vacations-sync/route.ts`):
+  `export const dynamic = 'force-dynamic'`, `maxDuration = 60`, auth vía
+  `Authorization: Bearer ${CRON_SECRET}` comparado con `timingSafeEqual` (nunca abierto si falta el
+  secret), registrado en `vercel.json` → `crons`. `middleware.ts` ya deja pasar `/api/cron/*` sin
+  sesión (cada ruta cron se autentica sola).
+- **Patrón de disparo manual + preview ya establecido y 100% reutilizable**
+  (`app/api/vacations/sync/route.ts`): un único `POST` con body `{ dryRun }` (default `true` =
+  preview, el botón de la UI siempre previsualiza antes de aplicar), gateado con `requireAdmin()`;
+  un `GET` separado devuelve la última corrida real (tabla genérica `SyncRun`: `source`, `trigger`,
+  `ranAt`, `ok`, contadores, `details`) para mostrar "Último envío" en la UI, igual que hoy se
+  muestra "Última sincronización" en `/holidays`.
+- **Slack deprecó `files.upload`** en favor de `files.getUploadURLExternal` →
+  `upload` → `files.completeUploadExternal` (este último acepta `initial_comment`, que permite que
+  el texto y la imagen salgan como **un solo mensaje**, igual que en el ejemplo de Anabella, en vez
+  de dos mensajes separados). Esto hay que verificarlo contra la documentación oficial de Slack
+  antes de codear (regla ya existente en este proyecto para cualquier API de terceros) — no asumir
+  que sigue vigente tal cual lo sé hoy.
+
+## Decisiones confirmadas
+
+1. **Todo queda en este repo** — sin monorepo, sin API cruzada, sin duplicar datos de feriados.
+2. **Slack App**: no existe todavía — el usuario la crea siguiendo la guía de abajo y me pasa el
+   bot token, que queda **solo** en `.env.local` (nunca en el chat en texto plano una vez cargado).
+3. **Fidelidad visual de la imagen**: replicar el diseño de Anabella lo más fiel posible desde el
+   arranque (fondo pastel tipo acuarela, título manuscrito "Hello {Mes} {Año}", bandera + lista de
+   feriados por país, mini calendario con los días resaltados) — **con una salvedad práctica**:
+   Satori (el motor detrás de `@vercel/og`) no soporta bien ilustraciones tipo acuarela a mano ni
+   emoji a color consistentemente entre entornos. Plan: pedirle a Anabella/Anita el archivo de
+   diseño original (Canva/Figma) o al menos exportar el fondo decorativo en blanco (sin datos) como
+   PNG/SVG estático, y usarlo como asset de fondo fijo — Satori solo dibuja encima el texto
+   dinámico (mes, banderas vía imágenes de bandera por código de país, lista de feriados, mini
+   calendario). Si no se consigue el archivo original, se recrea un fondo pastel simple propio
+   (gradiente + hojas en SVG) como fallback, dejando claro que no será pixel-perfect.
+4. **Disparo**: las tres formas, todas sobre el mismo endpoint (igual al patrón de vacations/sync):
+   - Cron automático: día 1 de cada mes, 9:00 Uruguay (UTC-3, sin horario de verano) = `12:00 UTC`.
+   - Botón "Enviar ahora" en `/holidays` (admin), con `confirmDialog()` antes de postear de verdad
+     (es un envío real a un canal de Slack, no se puede deshacer).
+   - Botón "Preview" que genera texto + imagen y los muestra en la UI sin tocar Slack.
+5. **Alcance de países**: solo los que tienen al menos un `Resource` con ese `country` hoy (ver
+   asunción en hallazgos).
+6. **Canal**: `SLACK_HOLIDAYS_CHANNEL_ID` queda como env var. Por ahora, tanto el cron como el botón
+   manual apuntan al canal de prueba `C065Z27FUSH`. El cambio al canal "general" real de producción
+   es un cambio de env var que el usuario hace cuando esté conforme con el resultado — no un deploy
+   de código, y lo hago **solo si el usuario lo pide explícitamente** (boundary abajo).
+7. **Idioma**: mensaje bilingüe ES + EN en el mismo texto, mismo formato que el ejemplo de Anabella.
+8. **Si no hay feriados ese mes** (para los países con recursos): no se envía nada a Slack: se
+   registra una corrida `ok: true` en `SyncRun` con `details: 'sin feriados este mes'`, visible como
+   "Último envío" en la UI. Evita spam de "no hay nada que avisar" en el canal.
+
+## Tech Stack
+
+Mismo stack: Next.js 14.2 App Router, Prisma 5.22 + Turso/libSQL, Tailwind. Nueva dependencia:
+**`@vercel/og`** (Satori + Resvg) para generar la imagen PNG server-side, sin navegador headless —
+encaja bien con el deploy actual en Vercel. Sin SDK de Slack: se llama a la Web API de Slack
+directo vía `fetch` (dos o tres llamadas por envío, no justifica una dependencia nueva).
+
+## Commands
+
+Sin cambios a los comandos existentes (`npm run dev` / `build` / `lint`, `npx tsc --noEmit`).
+
+## Project Structure
+
+```
+lib/holidays-bot.ts                      → lógica pura: resolver países-con-recursos, armar el
+                                            texto bilingüe, generar la imagen (ImageResponse de
+                                            @vercel/og), postear a Slack. Reutilizada por el cron,
+                                            el endpoint manual y el de preview.
+app/api/holidays-bot/image/route.ts      → GET ?year&month, admin-gated, devuelve el PNG generado
+                                            (para el <img> de preview en la UI; no expone nada a
+                                            Slack).
+app/api/holidays-bot/send/route.ts       → GET (última corrida, admin-gated, igual a
+                                            /api/vacations/sync) + POST { year?, month?, dryRun }
+                                            (admin-gated, dryRun default true = preview sin Slack,
+                                            false = envío real + registro en SyncRun).
+app/api/cron/holidays-bot/route.ts       → GET, auth CRON_SECRET (igual a vacations-sync), llama a
+                                            la misma lógica con trigger='cron', dryRun=false, para
+                                            el mes actual.
+app/holidays/page.tsx                    → nueva sección admin-only "Holidays Bot": selector de
+                                            mes/año (default mes actual), botón Preview (muestra
+                                            imagen + texto inline), botón "Enviar ahora" (con
+                                            confirmDialog), línea "Último envío" (igual patrón a
+                                            "Última sincronización" de vacaciones).
+vercel.json                              → + entrada de cron
+                                            { "path": "/api/cron/holidays-bot", "schedule": "0 12 1 * *" }
+.env.local                               → + SLACK_BOT_TOKEN, + SLACK_HOLIDAYS_CHANNEL_ID (default
+                                            al canal de prueba)
+```
+
+Reutiliza sin cambios: `prisma.countryHoliday`, `prisma.resource` (agrupado por `country`),
+`prisma.syncRun` (tabla genérica ya existente), `lib/auth.ts` (`requireAdmin`),
+`lib/confirm-dialog.ts`.
+
+## Code Style
+
+Seguir el patrón exacto de `app/api/vacations/sync/route.ts` + `lib/vacation-sync-run.ts` para la
+separación lógica/ruta y el manejo de `dryRun`/`trigger`/`SyncRun`. Rutas API con
+`export const dynamic = 'force-dynamic'`, `NextResponse.json`. Nada de secrets ni tokens en logs
+(mismo criterio que `vacations-sync`, que solo loguea counts).
+
+## Testing Strategy
+
+Sin suite automatizada (consistente con el resto del repo) — verificación manual:
+
+- Generar preview para varios meses de prueba con fixtures descartables: un mes con feriados en 2+
+  países, un mes sin feriados para ningún país-con-recursos (confirmar que no envía y registra el
+  `details` correcto), febrero (bisiesto y no bisiesto) para el mini calendario.
+- Confirmar que `/api/cron/holidays-bot` rechaza sin el header `Authorization` correcto (401).
+- **Todo envío real durante el desarrollo va al canal de prueba `C065Z27FUSH` únicamente** — nunca
+  a un canal real mientras se está probando.
+- Antes de escribir el código de subida de imagen a Slack: confirmar contra la documentación
+  oficial (WebFetch) el flujo vigente de `files.getUploadURLExternal` /
+  `files.completeUploadExternal` y si `initial_comment` efectivamente combina texto + imagen en un
+  solo mensaje — no asumirlo de memoria.
+
+## Boundaries
+
+- **Always**: resolver la lista de feriados/países siempre server-side desde `CountryHoliday` +
+  `Resource` (nunca aceptar datos de feriados desde el cliente para un envío real); gatear
+  `/api/holidays-bot/*` (menos el cron) con `requireAdmin()`; reusar `CRON_SECRET` + el patrón
+  `SyncRun` ya existentes; verificar el flujo de subida de archivos de Slack contra la
+  documentación oficial antes de implementarlo.
+- **Ask first**: cambiar `SLACK_HOLIDAYS_CHANNEL_ID` del canal de prueba al canal real de
+  producción; cualquier envío manual contra un canal que no sea el de prueba; pedirle a
+  Anabella/Anita el archivo de diseño original de la imagen (coordinación humana, no algo que yo
+  pueda hacer).
+- **Never**: loguear o mostrar el `SLACK_BOT_TOKEN` en texto plano una vez cargado en
+  `.env.local`; mandar a un canal que no sea el configurado en la env var; tocar el flujo existente
+  de CRUD de `CountryHoliday` (import/export/sync) — este trabajo solo agrega el envío a Slack.
+
+## Cómo crear la Slack App (para el usuario)
+
+1. Ir a https://api.slack.com/apps → "Create New App" → "From scratch" → nombre sugerido
+   "ZirconTracker Holidays Bot" → seleccionar el workspace de ZirconTech.
+2. En "OAuth & Permissions" → "Scopes" → "Bot Token Scopes", agregar: `chat:write` (postear
+   mensajes) y `files:write` (subir la imagen).
+3. "Install to Workspace" (arriba de la misma página) → aceptar permisos.
+4. Copiar el "Bot User OAuth Token" (empieza con `xoxb-`).
+5. Invitar el bot al canal de prueba: en Slack, dentro del canal `C065Z27FUSH`, escribir
+   `/invite @ZirconTracker Holidays Bot` (o el nombre que le hayas puesto).
+6. Pasarme el token — lo guardo directo en `.env.local` (gitignoreado) y no lo repito en el chat.
+
+## Pendiente de implementación
+
+Este spec queda a la espera de: (a) que el usuario cree la Slack App y pase el bot token, (b) que
+se consiga (o se descarte) el asset de fondo original de Anabella para la imagen. Implementación
+arranca una vez estén esos dos insumos, o con el fallback acordado si no aparecen.
+
+## Actualización — el usuario creó un Incoming Webhook en vez de una Slack App con bot token
+
+Cambia el mecanismo de envío respecto a lo planeado arriba. Verificado contra la documentación
+oficial de Slack (docs.slack.dev) antes de adaptar el código:
+
+- **Un Incoming Webhook no puede subir archivos** — solo texto/`blocks`. Para la imagen se usa un
+  block `image` con una `image_url` **pública** (Slack la descarga de su lado, sin auth). Se ve como
+  una imagen incrustada en el mensaje, no como un adjunto con nombre de archivo — una diferencia
+  cosmética real contra el mensaje de referencia de Anabella (que sí muestra el archivo como
+  adjunto, porque ella lo subió a mano).
+- **El canal queda fijo al que se eligió al crear el webhook** — no es overrideable por request
+  (confirmado en la doc oficial). `SLACK_HOLIDAYS_CHANNEL_ID` deja de controlar a dónde se postea;
+  queda solo como referencia/display. Cambiar de canal en el futuro implica crear otro webhook (o
+  reconfigurar el existente desde la config de la Slack App) — no es un cambio de env var como
+  estaba planeado originalmente con el bot token.
+- **La imagen tiene que ser alcanzable desde internet** — `/api/holidays-bot/image` ya no puede
+  estar gateada con `requireAdmin()` (Slack no manda cookies de sesión), así que se abrió sin auth
+  (no expone nada sensible: son los mismos feriados por país que ya son de lectura pública en la
+  app). Esto también significa que **el flujo completo con imagen no se puede probar en local**
+  contra `localhost` — Slack no puede alcanzarlo. En local solo se puede validar el preview (que
+  genera la imagen vía la misma ruta, servida directo al navegador, sin pasar por Slack) y el envío
+  de solo-texto; la imagen incrustada en el mensaje real de Slack recién se puede confirmar end-to-
+  end una vez deployado.
+- El código del flujo de bot token (`files.getUploadURLExternal` → `completeUploadExternal`) queda
+  implementado y sin usar en `lib/slack.ts`, por si más adelante se arma la Slack App con bot token
+  en vez de (o además de) este webhook — `runHolidaysBot` prioriza `SLACK_WEBHOOK_URL` si está
+  configurada, y cae al bot token si no.
+- `SLACK_WEBHOOK_URL` quedó guardada en `.env.local` (gitignoreado) — no se repite en el chat.
