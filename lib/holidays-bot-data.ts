@@ -106,28 +106,15 @@ export function filterHolidaysBotCountries(
 }
 
 // Texto bilingüe ES/EN, mismo formato que el mensaje de referencia de Anabella.
+// El detalle por país/feriado va dentro de la imagen, no en el texto.
 export function buildHolidaysBotText(data: HolidaysBotMonthData): string {
-  const esDate = (iso: string) => {
-    const [, m, d] = iso.split('-').map(Number)
-    return `${d}/${m}`
-  }
-
-  const lines: string[] = []
-  lines.push(`¡Hola equipo! 👋`)
-  lines.push(`Les compartimos los feriados de ${data.monthNameEs} para que los tengan en cuenta al planificar sus actividades.`)
-  lines.push(`¡Que tengan un excelente mes!`)
-  lines.push('')
-  lines.push(`Hi team! 👋`)
-  lines.push(`Sharing ${data.monthNameEn}'s holidays so you can keep them in mind when planning your activities.`)
-  lines.push(`Wishing everyone a great month!`)
-
-  if (data.countries.length) {
-    lines.push('')
-    for (const c of data.countries) {
-      lines.push(`${c.flag} ${c.country}`)
-      for (const h of c.holidays) lines.push(`• ${esDate(h.date)} – ${h.name}`)
-    }
-  }
-
-  return lines.join('\n')
+  return [
+    `¡Hola equipo! 👋`,
+    `Les compartimos los feriados de ${data.monthNameEs} para que los tengan en cuenta al planificar sus actividades.`,
+    `¡Que tengan un excelente mes!`,
+    '',
+    `Hi team! 👋`,
+    `Sharing ${data.monthNameEn}'s holidays so you can keep them in mind when planning your activities.`,
+    `Wishing everyone a great month!`,
+  ].join('\n')
 }

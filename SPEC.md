@@ -3568,3 +3568,56 @@ Sin suite automatizada — verificación manual:
   excepción, sin selección manual); romper la data existente de `CountryHoliday` con country
   "Yemen" u otros no-listados al hacer el fix del combo (son datos reales, no se tocan ni se
   migran a otro string).
+
+---
+
+# Spec: Holidays Bot — imagen con template y textos de feriados dentro de la imagen
+
+## Objetivo
+
+El usuario adjuntó el template (acuarela 1024x1536 sin texto) y un ejemplo terminado (octubre 2026)
+y pidió: usar ese template como fondo de la imagen del mensaje de Slack y, **en vez de listar los
+feriados en el texto del mensaje, ponerlos dentro de la imagen**. La imagen replica el ejemplo:
+título "Hello <Mes> <Año>", "Holidays:" con globo, lista de países (bandera + nombre + viñetas
+`d/m – nombre`) a la izquierda y calendario del mes a la derecha con los días feriados resaltados.
+
+## Alcance
+
+1. Imagen nueva (1024x1536 PNG) con el template como fondo, todo en inglés (mes, días, `Holidays:`).
+2. El texto del mensaje queda solo con el saludo bilingüe ES/EN (se elimina el listado por país).
+3. Países sin bandera conocida (ej. un país escrito a mano) usan un globo como placeholder; se suman
+   Portugal, USA y Yemen a `lib/countries.ts` si faltan, para que tengan bandera.
+4. Si la lista es larga, se achica tipografía/espaciado (hasta 50%) para que entre en el alto
+   disponible; el calendario se adapta a 5 o 6 filas según el mes.
+5. Sin cambios en quién recibe qué: cron sigue usando solo países con recursos; preview/envío manual
+   siguen respetando la selección por checkbox; la URL pública de la imagen sigue igual.
+
+## Implementación
+
+- Se reemplaza `satori` (solo usa la primera fuente, bugs de flex) por un SVG armado a mano:
+  `opentype.js` convierte texto a paths (fuentes Libre Baskerville Bold, Great Vibes, Inter,
+  bundleadas en `assets/holidays-bot/`) y `@resvg/resvg-wasm` rasteriza a PNG. Se serializan los
+  paths a mano con `Z` explícito (el `toPathData` de opentype.js hace que resvg pierda contornos).
+- Template guardado como JPEG (~90 KB) en `assets/holidays-bot/`; fuentes y template se agregan a
+  `outputFileTracingIncludes` en `next.config.mjs` para que viajen en Vercel.
+- Banderas: se siguen bajando de flagcdn.com como PNG y se incrustan como data URI (con fallback al
+  globo si falla la descarga).
+- Dependencias: se agrega `opentype.js`; se quita `satori` si ya nadie lo usa.
+- Archivos: `lib/holidays-bot-image.ts` (reescrito, se renombra a `.ts`), `lib/holidays-bot-data.ts`
+  (`buildHolidaysBotText` sin listado), `lib/countries.ts`, `next.config.mjs`, `package.json`.
+
+## Criterios de aceptación
+
+- La imagen de octubre 2026 es visualmente equivalente al ejemplo adjunto.
+- Meses con 5 y 6 filas de calendario, 1 país y 8 países, país sin bandera, feriados largos con
+  wrap: todo legible, sin texto cortado ni superpuesto.
+- Slack muestra la imagen (unfurl) y el mensaje ya no lista feriados en texto.
+- Preview del modal y envío manual/cron siguen funcionando; `tsc`, lint y `next build` pasan; el
+  endpoint de imagen sigue andando en producción (archivos trazados).
+
+## Límites
+
+- **Always**: textos de feriados dentro de la imagen, no en el mensaje.
+- **Ask first**: enviar un mensaje real a Slack durante las pruebas (se usa el preview/endpoint de
+  imagen local, no el webhook).
+- **Never**: tocar el filtro del cron; commitear archivos del spike/scratchpad.
