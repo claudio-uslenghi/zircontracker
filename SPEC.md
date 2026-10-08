@@ -3621,3 +3621,81 @@ título "Hello <Mes> <Año>", "Holidays:" con globo, lista de países (bandera +
 - **Ask first**: enviar un mensaje real a Slack durante las pruebas (se usa el preview/endpoint de
   imagen local, no el webhook).
 - **Never**: tocar el filtro del cron; commitear archivos del spike/scratchpad.
+
+---
+
+# Spec: Holidays Bot — países del envío automático configurables
+
+## Contexto
+
+Anabella notó que en el mensaje automático del día 1 no apareció Yemen y sí aparecieron Venezuela
+y España, aunque hoy no hay nadie en esos países. Causa: el cron incluye "países con algún
+`Resource.country`", y no existe un flag de activo/inactivo — España y Venezuela conservan 1
+recurso viejo cada uno, Yemen (y Portugal) no tienen ninguno. Además los feriados de Estados
+Unidos están guardados como `USA` y los recursos como `Estados Unidos`, así que nunca matchean.
+El envío manual ya permite elegir países (checkboxes); el automático no.
+
+## Objetivo
+
+Un admin define, en una configuración **aparte del envío manual**, a qué países avisa el bot
+automático. El cron manda solo esos, sin mirar recursos.
+
+## Decisiones confirmadas
+
+1. **Lista guardada por admin** (opt-in): una tabla con los países incluidos en el envío
+   automático. Un país sin fila queda **fuera** (un país nuevo no sale solo por sorpresa).
+2. **Valor inicial** (seed de la migración): Argentina, Brasil, Chile, Uruguay y Yemen.
+3. **Configuración separada del envío manual**: botón propio ("Envío automático") en `/feriados`
+   que abre su propio modal, para que nadie crea que hay que "enviar" algo. El modal de envío
+   manual no cambia (sigue arrancando con todo tildado y su aviso "sin recursos hoy").
+4. **USA = Estados Unidos**: el código los trata como el mismo país al armar la lista y al
+   filtrar; no se tocan datos existentes. En la lista guardada se usa el nombre canónico
+   `Estados Unidos`.
+
+## Alcance
+
+- Tabla nueva `HolidaysBotAutoCountry { country String @id }` (modelo Prisma + script de migración
+  idempotente `scripts/add-holidays-bot-auto-countries.ts` que crea la tabla y hace el seed).
+- `GET/PUT /api/holidays-bot/auto-countries` (solo admin): devuelve los países con feriados
+  cargados (o ya guardados) con su estado; el PUT reemplaza la lista completa.
+- `runHolidaysBot`: sin selección explícita, un envío real (cron) usa la lista guardada ∩ países
+  con feriados ese mes. Lista vacía, o sin feriados para esos países → `skipped` y queda registrado
+  en el log de corridas (como hoy). El envío manual sigue mandando su selección explícita.
+- UI: `AutoCountriesModal` (checkboxes con bandera, "Guardar", aviso si no hay ninguno tildado,
+  texto "El día 1 de cada mes a las 09:00 (ARG) se avisa a estos países"). Solo admin.
+
+## Fuera de alcance
+
+Horario/frecuencia del cron, canal de Slack, formato de la imagen/mensaje, el filtro por recursos
+en el modal manual, limpiar recursos viejos de España/Venezuela.
+
+## Archivos
+
+- `prisma/schema.prisma`, `scripts/add-holidays-bot-auto-countries.ts`
+- `lib/countries.ts` (helper de nombre canónico), `lib/holidays-bot-send.ts`
+  (`defaultCountries`), `lib/holidays-bot-data.ts` (si hace falta normalizar en el filtro)
+- `app/api/holidays-bot/auto-countries/route.ts`
+- `components/modals/AutoCountriesModal.tsx`, `app/feriados/page.tsx`
+
+## Código / estilo
+
+Mismos patrones que `HolidaysBotModal` (modal, `requireAdmin`, fetch + estados de carga/error) y
+los scripts de migración existentes (`@libsql/client`, idempotentes).
+
+## Criterios de aceptación
+
+- Con la lista inicial, el cron arma el mensaje solo con Argentina, Brasil, Chile, Uruguay y Yemen
+  (los que tengan feriados ese mes); Venezuela/España/Portugal/México/USA no salen.
+- Destildar/tildar un país en el modal y guardar cambia lo que manda el próximo cron (verificable
+  invocando el endpoint del cron a mano con `CRON_SECRET`, sin enviar a Slack: probar con
+  `runHolidaysBot` en dry-run).
+- Lista vacía → el cron no envía nada y lo registra.
+- Colaborador/no-admin no ve el botón y la API responde 403.
+- `USA` y `Estados Unidos` se muestran como un único país en el modal.
+- Mobile y desktop; `tsc`, lint y `next build` pasan.
+
+## Límites
+
+- **Always**: opt-in (sin fila = no se manda); solo admin escribe la lista.
+- **Ask first**: correr la migración contra Turso de producción; enviar un mensaje real a Slack.
+- **Never**: cambiar el envío manual ni el formato del mensaje; borrar `CountryHoliday`/`Resource`.
