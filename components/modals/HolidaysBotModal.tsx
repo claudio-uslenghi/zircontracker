@@ -30,7 +30,7 @@ export default function HolidaysBotModal({ open, onClose }: Props) {
   // Qué países van en el envío — todos marcados por defecto al cargar el
   // preview (incluidos los que no tienen ningún recurso hoy, como Yemen);
   // el admin destilda lo que no quiera mandar. El cron automático no pasa
-  // por acá — sigue filtrando solo por países con recursos.
+  // por acá — usa la lista de "Envío automático".
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set())
 
   const request = useCallback(

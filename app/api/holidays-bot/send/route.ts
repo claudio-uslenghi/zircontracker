@@ -27,7 +27,7 @@ export async function GET() {
 // El botón de preview en la UI siempre manda dryRun:true primero; "Enviar
 // ahora" manda dryRun:false. selectedCountries es la selección por checkbox
 // del admin (todos los países del mes marcados por defecto) — sin ella, el
-// envío real cae al filtro de siempre (solo países con recursos hoy).
+// envío real cae a la lista del envío automático (ver /api/holidays-bot/auto-countries).
 export async function POST(req: NextRequest) {
   const denied = await adminOr403()
   if (denied) return denied
