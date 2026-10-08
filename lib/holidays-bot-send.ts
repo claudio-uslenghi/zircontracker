@@ -40,12 +40,11 @@ async function recordRun(trigger: Trigger, data: HolidaysBotMonthData, ok: boole
 }
 
 // Decide qué países se usan si el caller no mandó una selección explícita:
-// el preview sin selección muestra todo (el default confirmado es "todo
-// marcado, el admin destilda"); un envío real sin selección explícita — el
-// cron — usa la lista guardada por un admin (Envío automático), sin mirar
-// recursos. "USA" y "Estados Unidos" cuentan como el mismo país.
-async function defaultCountries(data: HolidaysBotMonthData, dryRun: boolean): Promise<string[]> {
-  if (dryRun) return data.countries.map((c) => c.country)
+// la lista guardada del Envío automático (sin mirar recursos). Es también el
+// punto de partida del preview manual, para que el envío manual arranque
+// tildado igual que el automático (el admin puede cambiarlo para ese envío).
+// "USA" y "Estados Unidos" cuentan como el mismo país.
+async function defaultCountries(data: HolidaysBotMonthData): Promise<string[]> {
   const auto = await getAutoCountries()
   return data.countries.filter((c) => auto.has(canonicalCountryName(c.country))).map((c) => c.country)
 }
@@ -63,7 +62,7 @@ export async function runHolidaysBot(opts: {
   const data = await getHolidaysBotMonthData(opts.year, opts.month)
   let effectiveCountries: string[]
   try {
-    effectiveCountries = opts.selectedCountries ?? (await defaultCountries(data, opts.dryRun))
+    effectiveCountries = opts.selectedCountries ?? (await defaultCountries(data))
   } catch (err) {
     // Sin poder leer la lista del envío automático (ej. migración sin correr)
     // el cron no manda nada, pero la falla tiene que quedar visible en
