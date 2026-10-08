@@ -27,10 +27,9 @@ export default function HolidaysBotModal({ open, onClose }: Props) {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [imgKey, setImgKey] = useState(0)
-  // Qué países van en el envío — todos marcados por defecto al cargar el
-  // preview (incluidos los que no tienen ningún recurso hoy, como Yemen);
-  // el admin destilda lo que no quiera mandar. El cron automático no pasa
-  // por acá — usa la lista de "Envío automático".
+  // Qué países van en el envío — al cargar el preview arrancan tildados los
+  // mismos que están configurados en "Envío automático" (los que además
+  // tengan feriados ese mes); el admin puede cambiarlo solo para este envío.
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set())
 
   const request = useCallback(
@@ -60,15 +59,15 @@ export default function HolidaysBotModal({ open, onClose }: Props) {
     }
   }, [request, selectedCountries])
 
-  // Al abrir (o cambiar mes/año), se re-arranca la selección a "todos" y se
-  // pide un preview fresco sin selección explícita (el server default es
-  // "todos los países del mes" para el preview).
+  // Al abrir (o cambiar mes/año), se re-arranca la selección a la del Envío
+  // automático: se pide un preview sin selección explícita y el server
+  // devuelve en sentCountries cuáles corresponden por defecto.
   const loadFreshPreview = useCallback(async () => {
     setLoading(true); setError(''); setPreview(null); setResult(null)
     try {
       const outcome = await request(true)
       setPreview(outcome)
-      setSelectedCountries(new Set(outcome.data.countries.map((c) => c.country)))
+      setSelectedCountries(new Set(outcome.sentCountries))
       setImgKey((k) => k + 1)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
@@ -176,7 +175,9 @@ export default function HolidaysBotModal({ open, onClose }: Props) {
               ) : (
                 <>
                   <div>
-                    <p className="text-xs text-gray-500 font-medium mb-1.5">Países a incluir</p>
+                    <p className="text-xs text-gray-500 font-medium mb-1.5">
+                      Países a incluir <span className="font-normal">— tildados los del Envío automático; cambiarlos acá solo afecta a este envío</span>
+                    </p>
                     <div className="flex flex-wrap gap-x-4 gap-y-1.5 border border-gray-200 rounded-lg p-3 bg-gray-50">
                       {preview.data.countries.map((c) => (
                         <label key={c.country} className="flex items-center gap-1.5 text-sm cursor-pointer">
@@ -187,7 +188,6 @@ export default function HolidaysBotModal({ open, onClose }: Props) {
                             className="rounded"
                           />
                           {c.flag} {c.country}
-                          {!c.hasResource && <span className="text-amber-600 text-xs">(sin recursos hoy)</span>}
                         </label>
                       ))}
                     </div>
