@@ -6,6 +6,8 @@ import {
   type HolidaysBotMonthData,
 } from '@/lib/holidays-bot-data'
 import { renderHolidaysBotImagePng } from '@/lib/holidays-bot-image'
+import { getAutoCountries } from '@/lib/holidays-bot-auto'
+import { canonicalCountryName } from '@/lib/countries'
 import { postImageToSlack, postToSlackWebhook } from '@/lib/slack'
 
 export const SOURCE = 'holidays-bot'
@@ -38,13 +40,14 @@ async function recordRun(trigger: Trigger, data: HolidaysBotMonthData, ok: boole
 }
 
 // Decide qué países se usan si el caller no mandó una selección explícita:
-// el cron (nadie revisa el envío automático) y cualquier envío real sin
-// selección explícita se quedan con el filtro de siempre (solo países con
-// recursos hoy); el preview sin selección explícita muestra todo, porque
-// ahí el default confirmado es "todo marcado, el admin destilda".
-function defaultCountries(data: HolidaysBotMonthData, dryRun: boolean): string[] {
+// el preview sin selección muestra todo (el default confirmado es "todo
+// marcado, el admin destilda"); un envío real sin selección explícita — el
+// cron — usa la lista guardada por un admin (Envío automático), sin mirar
+// recursos. "USA" y "Estados Unidos" cuentan como el mismo país.
+async function defaultCountries(data: HolidaysBotMonthData, dryRun: boolean): Promise<string[]> {
   if (dryRun) return data.countries.map((c) => c.country)
-  return data.countries.filter((c) => c.hasResource).map((c) => c.country)
+  const auto = await getAutoCountries()
+  return data.countries.filter((c) => auto.has(canonicalCountryName(c.country))).map((c) => c.country)
 }
 
 // Núcleo compartido por el cron, el botón "Enviar ahora" y el preview.
@@ -58,7 +61,18 @@ export async function runHolidaysBot(opts: {
   selectedCountries?: string[]
 }): Promise<HolidaysBotOutcome> {
   const data = await getHolidaysBotMonthData(opts.year, opts.month)
-  const effectiveCountries = opts.selectedCountries ?? defaultCountries(data, opts.dryRun)
+  let effectiveCountries: string[]
+  try {
+    effectiveCountries = opts.selectedCountries ?? (await defaultCountries(data, opts.dryRun))
+  } catch (err) {
+    // Sin poder leer la lista del envío automático (ej. migración sin correr)
+    // el cron no manda nada, pero la falla tiene que quedar visible en
+    // "Último envío" y no solo en los logs de Vercel.
+    if (!opts.dryRun) {
+      await recordRun(opts.trigger, filterHolidaysBotCountries(data, []), false, 'no se pudo leer la lista del envío automático')
+    }
+    throw err
+  }
   const filtered = filterHolidaysBotCountries(data, effectiveCountries)
   const text = buildHolidaysBotText(filtered)
   const skipped = filtered.countries.length === 0
@@ -68,7 +82,7 @@ export async function runHolidaysBot(opts: {
   }
 
   if (skipped) {
-    await recordRun(opts.trigger, filtered, true, 'sin feriados este mes para los países incluidos')
+    await recordRun(opts.trigger, filtered, true, 'sin feriados este mes para los países incluidos (o ninguno configurado en el envío automático)')
     return { dryRun: false, skipped: true, data, text, sentCountries: effectiveCountries }
   }
 

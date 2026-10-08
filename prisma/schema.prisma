@@ -122,6 +122,12 @@ model CountryHoliday {
   @@unique([country, date])
 }
 
+// Países incluidos en el envío AUTOMÁTICO del Holidays Bot (cron del día 1).
+// Opt-in: un país sin fila no se manda. Nombre canónico (ver lib/countries.ts).
+model HolidaysBotAutoCountry {
+  country String @id
+}
+
 model User {
   id        Int        @id @default(autoincrement())
   email     String     @unique

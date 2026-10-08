@@ -33,7 +33,7 @@ export const COUNTRIES: Country[] = [
 
 // Variantes de nombre que ya existen cargadas a mano en CountryHoliday /
 // Resource ("USA" en vez de "Estados Unidos") — se resuelven al mismo país.
-const NAME_ALIASES: Record<string, string> = { USA: 'Estados Unidos' }
+export const NAME_ALIASES: Record<string, string> = { USA: 'Estados Unidos' }
 
 /** Lookup by country name → flag */
 export const FLAG_BY_NAME: Record<string, string> = Object.fromEntries([
@@ -56,4 +56,9 @@ export const NAME_EN_BY_NAME: Record<string, string> = {
   Perú: 'Peru',
   'Rep. Dominicana': 'Dominican Republic',
   'Estados Unidos': 'USA',
+}
+
+/** Nombre canónico de un país (resuelve alias como "USA" → "Estados Unidos"). */
+export function canonicalCountryName(name: string): string {
+  return NAME_ALIASES[name] ?? name
 }

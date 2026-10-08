@@ -5,9 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSession } from 'next-auth/react'
 import { formatDate } from '@/lib/date-utils'
-import { Plus, Trash2, Upload, Download, Filter, Pencil, Send } from 'lucide-react'
+import { Plus, Trash2, Upload, Download, Filter, Pencil, Send, Settings } from 'lucide-react'
 import HolidayModal from '@/components/modals/HolidayModal'
 import HolidaysBotModal from '@/components/modals/HolidaysBotModal'
+import AutoCountriesModal from '@/components/modals/AutoCountriesModal'
 import CsvImportModal from '@/components/modals/CsvImportModal'
 import Pagination from '@/components/ui/Pagination'
 import type { CountryHoliday, SyncRunSummary } from '@/types'
@@ -33,6 +34,7 @@ function FeriadosPageInner() {
   const [editHoliday, setEditHoliday] = useState<CountryHoliday | null>(null)
   const [showCsvModal, setShowCsvModal] = useState(false)
   const [showHolidaysBotModal, setShowHolidaysBotModal] = useState(false)
+  const [showAutoCountriesModal, setShowAutoCountriesModal] = useState(false)
 
   // País filtrado reflejado en la URL (deep-linkable, sobrevive un reload) —
   // mismo criterio que /projects y el resto de la app.
@@ -106,12 +108,20 @@ function FeriadosPageInner() {
           <p className="text-sm text-gray-500 mt-1">Feriados por país — se aplican a todos los recursos de ese país</p>
         </div>
         {isAdmin && (
-          <button
-            onClick={() => setShowHolidaysBotModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm min-h-[40px]"
-          >
-            <Send size={14} /> Holidays Bot
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setShowAutoCountriesModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm min-h-[44px]"
+            >
+              <Settings size={14} /> Envío automático
+            </button>
+            <button
+              onClick={() => setShowHolidaysBotModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm min-h-[44px]"
+            >
+              <Send size={14} /> Holidays Bot
+            </button>
+          </div>
         )}
       </div>
       {isAdmin && lastHolidaysBotRun && (
@@ -244,6 +254,7 @@ function FeriadosPageInner() {
       )}
       {isAdmin && <CsvImportModal open={showCsvModal} onClose={() => setShowCsvModal(false)} />}
       {isAdmin && <HolidaysBotModal open={showHolidaysBotModal} onClose={() => setShowHolidaysBotModal(false)} />}
+      {isAdmin && <AutoCountriesModal open={showAutoCountriesModal} onClose={() => setShowAutoCountriesModal(false)} />}
     </div>
   )
 }
