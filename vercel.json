@@ -1,6 +1,9 @@
 {
-  "crons": [
-    { "path": "/api/cron/vacations-sync", "schedule": "0 10 * * *" },
-    { "path": "/api/cron/holidays-bot", "schedule": "0 12 1 * *" }
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "destination": "https://zircontracker.zircondev.com/$1",
+      "permanent": false
+    }
   ]
 }
